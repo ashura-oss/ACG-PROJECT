@@ -110,7 +110,7 @@ class InterceptorUITests(unittest.TestCase):
         self.assertIn('INCOMPLETE', ui.session_view.text)
         self.assertNotIn('DO_NOT_RENDER', ui.traffic_view.text)
 
-    def test_authenticated_transcript_and_quantum_evidence_are_visible(self):
+    def test_transcript_is_visible_without_proof_panel(self):
         ui, pipe, commands, quits, thread = self.start_ui()
         ui.update(snapshot(transcript=[{'session_id': 'a' * 32, 'direction': 'a_to_b',
                                        'sequence': 0, 'sender': 'Alice', 'receiver': 'Bob',
@@ -121,10 +121,7 @@ class InterceptorUITests(unittest.TestCase):
                                       'counts': {'011001100110': 140, '000000000000': 100}}]))
         self.wait_for(lambda: 'Authenticated conversation 🔐' in ui.traffic_view.text)
         self.assertIn('DECRYPTED', ui.traffic_view.text)
-        self.assertIn('order 10', ui.quantum_view.text)
-        self.assertIn('factors 3 × 11', ui.quantum_view.text)
-        self.assertIn('1,024 shots', ui.quantum_view.text)
-        self.assertIn('011001100110', ui.quantum_view.text)
+        self.assertNotIn('quantum', ui._views)
 
     def test_activity_is_bounded_and_clear_keeps_capture_state(self):
         ui, pipe, commands, quits, thread = self.start_ui()
@@ -165,8 +162,9 @@ class InterceptorUITests(unittest.TestCase):
                 ui.app.after_render += capture_screen
                 ui.run()
                 self.assertNotIn('Window too small', rendered[0])
-                for label in ('INTERCEPTOR', 'SESSION QUEUE', 'TRAFFIC', 'QUANTUM EVIDENCE', 'Command', 'F3'):
+                for label in ('INTERCEPTOR', 'SESSION QUEUE', 'TRAFFIC', 'Command', 'F3'):
                     self.assertIn(label, rendered[0])
+                self.assertNotIn('EVIDENCE', rendered[0])
 
 
 if __name__ == '__main__':

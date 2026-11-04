@@ -202,13 +202,7 @@ class CaptureQueue:
             raise CaptureError('Unknown wire frame type')
 
     def _show_evidence(self, evidence, private_exponent):
-        self.output('Quantum measurement evidence · Qiskit Aer')
-        for bits, count in sorted(evidence['counts'].items(), key=lambda item: (-item[1], item[0]))[:6]:
-            self.output(f'  {bits}: {count}')
-        self.output(f"Accepted sample: {evidence['sample']}; phase: {evidence['phase']:.6f}")
-        self.output(f"Continued fraction: {evidence['convergent']}; order: {evidence['order']}")
-        self.output(f"Recovered factors: {evidence['factors']}; RSA private exponent: {private_exponent}")
-        self.output(f"Shots: {evidence['shots']}; elapsed: {evidence['elapsed_seconds']:.3f}s")
+        self.output(f"RSA key recovered · {evidence['elapsed_seconds']:.2f}s")
 
     def recover(self, retry=True):
         """Run quantum recovery once per public RSA key, then unwrap sessions."""
@@ -392,7 +386,7 @@ def interactive(queue, process=None):
                 if len(path) >= 2 and path[0] == path[-1] and path[0] in ('"', "'"):
                     path = path[1:-1]
                 count = queue.export(path)
-                queue.output(f'Exported {count} authenticated messages to {_display(path)}')
+                queue.output(f'Exported {count} messages to {_display(path)}')
             elif line in ('help', '?', ''):
                 queue.output(HELP)
             else:

@@ -71,8 +71,8 @@ class InterceptorUI:
         self._quit_called = False
         self._command_feedback = ''
         self.activity_log = deque(maxlen=200)
-        self._pane_lines = {name: [] for name in ('queue', 'traffic', 'quantum', 'activity')}
-        self._follow_tail = {'queue': False, 'traffic': True, 'quantum': False, 'activity': True}
+        self._pane_lines = {name: [] for name in ('queue', 'traffic', 'activity')}
+        self._follow_tail = {'queue': False, 'traffic': True, 'activity': True}
         self._selected_pane = 'traffic'
         self._views = {name: TextArea(read_only=True, focusable=False,
                                      wrap_lines=True, scrollbar=True,
@@ -80,7 +80,6 @@ class InterceptorUI:
                        for name in self._pane_lines}
         self.session_view = self._views['queue']
         self.traffic_view = self._views['traffic']
-        self.quantum_view = self._views['quantum']
         self.activity_view = self._views['activity']
         self.composer = TextArea(multiline=False, wrap_lines=False, height=1,
                                  prompt=' > ', style='class:composer')
@@ -138,14 +137,11 @@ class InterceptorUI:
             self.session_view,
             heading('traffic', 'TRAFFIC'),
             self.traffic_view,
-            heading('quantum', 'QUANTUM EVIDENCE · Qiskit Aer'),
-            self.quantum_view,
             heading('activity', 'ACTIVITY'),
             self.activity_view,
         ])
         self.session_view.window.height = Dimension(min=1, preferred=3, max=5)
         self.traffic_view.window.height = Dimension(min=2, weight=3)
-        self.quantum_view.window.height = Dimension(min=2, preferred=4, max=8)
         self.activity_view.window.height = Dimension(min=1, preferred=2)
         wide = HSplit([
             Frame(self.session_view, title=lambda: self._heading_text('queue', 'SESSION QUEUE'),
@@ -153,14 +149,9 @@ class InterceptorUI:
             VSplit([
                 Frame(self.traffic_view, title=lambda: self._heading_text('traffic', 'TRAFFIC'),
                       style='class:frame'),
-                HSplit([
-                    Frame(self.quantum_view,
-                          title=lambda: self._heading_text('quantum', 'QUANTUM EVIDENCE · Qiskit Aer'),
-                          style='class:frame'),
-                    Frame(self.activity_view,
-                          title=lambda: self._heading_text('activity', 'ACTIVITY'),
-                          style='class:frame'),
-                ], width=Dimension(min=36, preferred=45, max=54)),
+                Frame(self.activity_view,
+                      title=lambda: self._heading_text('activity', 'ACTIVITY'),
+                      style='class:frame', width=Dimension(min=28, preferred=38, max=48)),
             ], padding=1),
         ])
         def choose_body():
@@ -204,14 +195,12 @@ class InterceptorUI:
                                    'error': '#fca5a5',
                                    'message': '#e2e8f0',
                                    'metadata': '#93c5fd',
-                                   'evidence': '#c4b5fd',
                                    'composer': 'bg:#111c2e #f8fafc',
                                    'footer': '#94a3b8',
                                    'scrollbar.background': '#162235',
                                    'scrollbar.button': '#5eead4',
                                }))
         self._render_snapshot()
-        self._append_log('Ready. Capture traffic, then recover and decrypt the queue.')
 
     def _header(self):
         state = self.snapshot.get('capture_state', 'READING')
@@ -295,7 +284,7 @@ class InterceptorUI:
         states = {'WAITING_FOR_KEY': 'WAITING', 'WAITING_FOR_KEY_WITH_ERRORS': 'WAITING / ERROR',
                   'KEY_RECOVERED': 'KEY READY', 'INCOMPLETE_OR_INVALID': 'INCOMPLETE'}
         if not sessions:
-            queue_lines = [[('class:muted', ' No sessions yet. Start capture before connecting the chat.')]]
+            queue_lines = [[('class:muted', ' No sessions yet.')]]
         for session in sessions:
             identifier = _fit(session.get('session_id', '?'), 8)
             peers = _fit(f"{_text(session.get('alice', '?'))} ↔ {_text(session.get('bob', '?'))}", 25)
@@ -309,7 +298,6 @@ class InterceptorUI:
                                 (f'class:{style}', state)])
         self._set_pane('queue', queue_lines)
         self._render_traffic()
-        self._render_quantum()
 
     def _render_traffic(self):
         transcript = []
@@ -351,42 +339,13 @@ class InterceptorUI:
                 lines.append([('', '')])
                 displayed.add(key)
         if not lines:
-            lines = [[('class:muted', ' Waiting for encrypted traffic.')],
-                     [('class:muted', ' Captured ciphertext appears here before decryption.')]]
+            lines = [[('class:muted', ' Waiting for traffic.')]]
         self._set_pane('traffic', lines)
 
     def _plaintext_lines(self, lines, row):
         lines.append([('class:read', f' {row["session_id"][:8]}  ' + _text(row['sender']) + ' → ' +
                        _text(row['receiver']) + f'  #{row["sequence"]}  DECRYPTED')])
         lines.append([('class:message', '   ' + _text(row['text']))])
-
-    def _render_quantum(self):
-        evidence_rows = _rows(self.snapshot.get('evidence'))
-        if not evidence_rows:
-            busy = self.snapshot.get('busy')
-            text = (('Order finding in progress…' if busy in ('Recovering RSA key', 'Decrypting queue')
-                     else _text(busy) + '…') if busy else 'No quantum measurements yet. F2 starts recovery.')
-            self._set_pane('quantum', [[('class:pending' if self.snapshot.get('busy') else 'class:muted', ' ' + text)]])
-            return
-        evidence = evidence_rows[-1]
-        factors = evidence.get('factors')
-        factor_text = ' × '.join(map(str, factors)) if type(factors) in (list, tuple) else '—'
-        phase = evidence.get('phase')
-        phase_text = f'{phase:.6f}' if type(phase) in (int, float) else '—'
-        elapsed = evidence.get('elapsed_seconds')
-        elapsed_text = f'{elapsed:.2f}s' if type(elapsed) in (int, float) else '—'
-        convergent = evidence.get('convergent')
-        fraction = '/'.join(map(str, convergent)) if type(convergent) in (list, tuple) else '—'
-        lines = [[('class:evidence', f' N={_text(evidence.get("N", 33))}  order {_text(evidence.get("order", "—"))}  factors {_text(factor_text)}')],
-                 [('class:metadata', f' {_count(evidence.get("shots")):,} shots  ·  {_text(elapsed_text)}  ·  fraction {_text(fraction)}')],
-                 [('class:message', f' Sample {_text(evidence.get("sample", "—"))}  phase {_text(phase_text)}')]]
-        counts = evidence.get('counts')
-        if type(counts) is dict:
-            valid_counts = [(bits, count) for bits, count in counts.items()
-                            if type(bits) is str and type(count) is int and count >= 0]
-            for bits, count in sorted(valid_counts, key=lambda item: (-item[1], item[0]))[:4]:
-                lines.append([('class:muted', f' {_text(bits)}  '), ('class:evidence', f'{count:,}')])
-        self._set_pane('quantum', lines)
 
     def _append_log(self, text):
         timestamp = datetime.now().strftime('%H:%M:%S')
