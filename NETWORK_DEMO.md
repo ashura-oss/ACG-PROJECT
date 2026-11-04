@@ -69,6 +69,16 @@ Wait for the capture-ready message before connecting Alice. If capture initializ
 
 Type messages in either chat terminal. Use `/quit` to close the connection. A new connection gets a fresh session secret; restart the listening command if necessary to begin the next session. For Linux/macOS substitute `.venv/bin/python` and the appropriate loopback interface in the same commands.
 
+## Chat interface
+
+Interactive chat terminals use a full-screen view with a conversation history, connection status, and a separate message composer. Incoming messages do not overwrite the text being typed. Press Enter to send, use `/clear` to clear the local display, and `/quit` to disconnect. Clearing the display does not delete captured traffic or change encryption state. After a remote disconnect, the conversation stays visible with an offline status until you quit.
+
+PgUp/PgDn scroll the conversation while keeping the composer focused; Ctrl+End returns to the latest messages. Ctrl+C also exits. Invalid input stays in the composer for editing.
+
+When input or output is redirected, the peers use a plain line-oriented interface for scripts and logs. Add `--plain` to either the `listen` or `connect` command to choose that interface explicitly. Both interfaces use the same protocol and commands. Educational explanations and limitations are kept in this document so the chat screen can focus on the conversation.
+
+## Attacker commands
+
 In Terminal C, use:
 
 ```text
@@ -122,6 +132,16 @@ Captures and exported transcripts are local artifacts, ignored by Git in `captur
 
 The tests distinguish actual TCP chat subprocesses from synthetic packet fixtures used to exercise the importer. Synthetic packets are a reproducible parser/recovery test, not proof that live capture works on a particular driver or interface. Run the three-terminal rehearsal on the presentation machine to validate its live capture setup. The existing benchmark measures quantum feasibility only, and does not include network-capture startup.
 
-The implementation run passed **54 tests** and the separate quantum gate passed **20/20 seeds**, with measured recovery wall times **1.539–1.896 seconds** on the development machine. See [VALIDATION.md](VALIDATION.md) and [network_benchmark_report.json](network_benchmark_report.json) for exact evidence and the outstanding live-driver check.
+An optional live integration test captures real loopback traffic, runs quantum recovery, and verifies that the chat continues after the observer exits. It is skipped unless `ACG_LIVE_CAPTURE_INTERFACE` is explicitly set. On Windows, after confirming the actual loopback interface with `capture.py --list-interfaces`:
+
+```powershell
+$env:ACG_LIVE_CAPTURE_INTERFACE = '\Device\NPF_Loopback'
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p test_network_integration.py -k optional_live -v
+Remove-Item Env:ACG_LIVE_CAPTURE_INTERFACE
+```
+
+The test uses a temporary ephemeral port, not the live demo's port 9001. It does not install drivers or elevate privileges. On Linux/macOS set the same environment variable to the appropriate loopback interface before invoking the test.
+
+The initial implementation run passed **54 tests** and the separate quantum gate passed **20/20 seeds**, with measured recovery wall times **1.539–1.896 seconds** on the development machine. Live Windows loopback capture and recovery were subsequently verified using Npcap. See [VALIDATION.md](VALIDATION.md) and [network_benchmark_report.json](network_benchmark_report.json) for evidence and the distinction between historical suite results and live capture checks.
 
 For the seminar, show the queue before recovery, actual quantum measurement evidence, authenticated recovered messages in both directions, and continued chat after stopping the observer. Cite sources and declare AI assistance as required by the assignment.

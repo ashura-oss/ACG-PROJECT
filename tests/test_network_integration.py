@@ -6,6 +6,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -258,6 +259,110 @@ class NetworkIntegrationTests(unittest.TestCase):
         self.assertEqual(summary[second_header['session_id']]['pending'], 0)
         self.assertEqual(summary[second_header['session_id']]['state'],
                          'INCOMPLETE_OR_INVALID')
+
+    @unittest.skipUnless(os.environ.get('ACG_LIVE_CAPTURE_INTERFACE'),
+                         'Set ACG_LIVE_CAPTURE_INTERFACE to opt into OS packet capture')
+    def test_optional_live_capture_quantum_recovery_and_independent_chat(self):
+        """Capture real loopback packets; no fixture, proxy, or elevation is used."""
+        interface = os.environ['ACG_LIVE_CAPTURE_INTERFACE']
+        with socket.socket() as probe:
+            probe.bind(('127.0.0.1', 0))
+            port = probe.getsockname()[1]
+        capture_path = self.directory / 'live.jsonl'
+        capture_lines = []
+        ready = threading.Event()
+        observer = subprocess.Popen(
+            command('capture.py', '--interface', interface, '--port', port,
+                    '--output', capture_path), cwd=self.directory,
+            env=self.environment, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding='utf-8', errors='replace')
+
+        def drain_capture():
+            for line in observer.stdout:
+                capture_lines.append(line)
+                if 'Capture ready' in line:
+                    ready.set()
+
+        drainer = threading.Thread(target=drain_capture, daemon=True)
+        drainer.start()
+
+        def stop_capture():
+            if observer.poll() is None:
+                observer.terminate()
+                try:
+                    observer.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    observer.kill()
+                    observer.wait(timeout=5)
+            drainer.join(timeout=5)
+            observer.stdout.close()
+        self.addCleanup(stop_capture)
+
+        deadline = time.monotonic() + 15
+        while not ready.wait(timeout=0.05):
+            if observer.poll() is not None:
+                drainer.join(timeout=2)
+                self.fail('Live capture initialization failed:\n' + ''.join(capture_lines))
+            if time.monotonic() >= deadline:
+                self.fail('Live capture did not become ready:\n' + ''.join(capture_lines))
+
+        key_path = self.directory / 'live-bob-private.json'
+        self.run_cli('chat.py', 'setup', '--key-file', key_path)
+        bob, bob_log = self.start_peer('live-bob', 'listen', '--host',
+                                       '127.0.0.1', '--port', port,
+                                       '--name', 'Bob', '--key-file', key_path)
+        self.wait_for_log(bob, bob_log, 'Listening on')
+        alice, alice_log = self.start_peer('live-alice', 'connect', '--host',
+                                           '127.0.0.1', '--port', port,
+                                           '--name', 'Alice')
+        self.wait_for_log(alice, alice_log, 'Connected session')
+        self.wait_for_log(bob, bob_log, 'Connected session')
+        alice_text = 'LIVE_ALICE_18bc quantum 🔐'
+        bob_text = 'LIVE_BOB_f2a9 response'
+        alice.stdin.write(alice_text + '\n')
+        alice.stdin.flush()
+        bob.stdin.write(bob_text + '\n')
+        bob.stdin.flush()
+        self.wait_for_log(bob, bob_log, alice_text)
+        self.wait_for_log(alice, alice_log, bob_text)
+
+        deadline = time.monotonic() + 10
+        while True:
+            raw = capture_path.read_text(encoding='utf-8') if capture_path.exists() else ''
+            # A writer may still be appending its final JSONL event.
+            events = [json.loads(line) for line in raw.splitlines(keepends=True)
+                      if line.endswith('\n')]
+            messages = [event for event in events if event.get('event') == 'frame'
+                        and event['frame'].get('type') == 'message']
+            if len(messages) >= 2:
+                break
+            if observer.poll() is not None or time.monotonic() >= deadline:
+                self.fail('Actual chat messages were not captured:\n'
+                          + ''.join(capture_lines) + '\n' + raw)
+            time.sleep(0.05)
+        self.assertNotIn(alice_text, raw)
+        self.assertNotIn(bob_text, raw)
+        recovered = self.run_cli('intercept.py', '--capture', capture_path,
+                                 '--decrypt-all', '--seed', 42)
+        self.assertIn(alice_text, recovered.stdout)
+        self.assertIn(bob_text, recovered.stdout)
+        self.assertIn('order: 10', recovered.stdout)
+
+        # The observer is not a relay: both directions must still work after it exits.
+        stop_capture()
+        capture_size = capture_path.stat().st_size
+        alice.stdin.write('AFTER_OBSERVER_ALICE_92fa\n')
+        alice.stdin.flush()
+        bob.stdin.write('AFTER_OBSERVER_BOB_3f85\n')
+        bob.stdin.flush()
+        self.wait_for_log(bob, bob_log, 'AFTER_OBSERVER_ALICE_92fa')
+        self.wait_for_log(alice, alice_log, 'AFTER_OBSERVER_BOB_3f85')
+        self.assertEqual(capture_path.stat().st_size, capture_size)
+        alice.stdin.write('/quit\n')
+        alice.stdin.flush()
+        self.assertEqual(alice.wait(timeout=10), 0)
+        self.assertEqual(bob.wait(timeout=10), 0)
 
 
 if __name__ == '__main__':

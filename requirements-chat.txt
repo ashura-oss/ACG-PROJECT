@@ -1,2 +1,3 @@
 # Chat endpoints only; no simulator or packet-capture driver is needed.
 cryptography>=43,<51
+prompt_toolkit>=3.0.48,<4

@@ -1,4 +1,4 @@
-"""Two terminal peers communicating directly over educational RSA-33/AES-GCM."""
+"""Two-way terminal chat using RSA-33 session exchange and AES-GCM."""
 import argparse
 import json
 from pathlib import Path
@@ -93,15 +93,76 @@ def _shutdown(connection):
         pass
 
 
-def run_chat(connection, reader, header, master, role):
+def run_interactive_chat(connection, reader, header, master, role):
+    from terminal_ui import TerminalChatUI
+    outgoing, incoming = ('a_to_b', 'b_to_a') if role == 'alice' else ('b_to_a', 'a_to_b')
+    own_name = header[role]
+    peer_name = header['bob' if role == 'alice' else 'alice']
+    receiver = RecordReceiver(header, master, incoming)
+    stopped = threading.Event()
+    sequence = 0
+
+    def send(text):
+        nonlocal sequence
+        if stopped.is_set():
+            ui.notice('Disconnected. /quit to close.')
+            return False
+        try:
+            frame = encrypt_record(header, master, outgoing, sequence, text)
+            connection.sendall(encode_frame(frame))
+        except ProtocolError as error:
+            ui.notice(str(error))
+            return False
+        except OSError:
+            stopped.set()
+            _shutdown(connection)
+            ui.set_disconnected()
+            return False
+        sequence += 1
+        return True
+
+    def quit_chat():
+        stopped.set()
+        _shutdown(connection)
+
+    ui = TerminalChatUI(own_name, peer_name, header['session_id'], send, quit_chat)
+
+    def receive():
+        try:
+            while not stopped.is_set():
+                frame = reader.read()
+                if frame is None:
+                    break
+                ui.message(peer_name, receiver.accept(frame))
+        except (OSError, ProtocolError) as error:
+            if not stopped.is_set():
+                ui.notice(str(error))
+        finally:
+            was_stopped = stopped.is_set()
+            stopped.set()
+            _shutdown(connection)
+            if not was_stopped:
+                ui.set_disconnected()
+
+    network_thread = threading.Thread(target=receive, name='chat-receiver', daemon=True)
+    network_thread.start()
+    try:
+        ui.run()
+    finally:
+        quit_chat()
+        network_thread.join(timeout=2)
+
+
+def run_chat(connection, reader, header, master, role, plain=False):
+    if not plain and sys.stdin.isatty() and sys.stdout.isatty():
+        return run_interactive_chat(connection, reader, header, master, role)
     outgoing, incoming = ('a_to_b', 'b_to_a') if role == 'alice' else ('b_to_a', 'a_to_b')
     own_name = header[role]
     peer_name = header['bob' if role == 'alice' else 'alice']
     receiver = RecordReceiver(header, master, incoming)
     stopped = threading.Event()
     print(f'Connected session {header["session_id"]}: {own_name} <-> {peer_name}', flush=True)
-    print('RSA-33 teaching protocol; names are labels, not authenticated identities.', flush=True)
-    print('Type a message and press Enter. /quit exits. Maximum 4096 UTF-8 bytes.', flush=True)
+    print('Enter to send | /quit to exit', flush=True)
 
     def send_input():
         sequence = 0
@@ -143,18 +204,18 @@ def run_chat(connection, reader, header, master, role):
         print('Chat disconnected.', flush=True)
 
 
-def connect(host, port, name):
+def connect(host, port, name, plain=False):
     with socket.create_connection((host, port), timeout=10) as connection:
         reader = FrameReader(connection)
         try:
             header, master = client_handshake(connection, reader, name)
             connection.settimeout(None)
-            run_chat(connection, reader, header, master, 'alice')
+            run_chat(connection, reader, header, master, 'alice', plain=plain)
         finally:
             reader.close()
 
 
-def listen(host, port, name, key_file):
+def listen(host, port, name, key_file, plain=False):
     key = load_key(key_file)
     validate_name(name)
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
@@ -168,7 +229,7 @@ def listen(host, port, name, key_file):
             try:
                 header, master = server_handshake(connection, reader, name, key['d'])
                 connection.settimeout(None)
-                run_chat(connection, reader, header, master, 'bob')
+                run_chat(connection, reader, header, master, 'bob', plain=plain)
             finally:
                 reader.close()
 
@@ -179,13 +240,14 @@ def main(argv=None):
             stream.reconfigure(encoding='utf-8')
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
-    setup = commands.add_parser('setup', help='Create the legitimate receiver key file once')
+    setup = commands.add_parser('setup', help='Create the receiver key file')
     setup.add_argument('--key-file', type=Path, default=DEFAULT_KEY_FILE)
     for command, name in (('listen', 'Bob'), ('connect', 'Alice')):
         peer = commands.add_parser(command)
         peer.add_argument('--host', default='127.0.0.1')
         peer.add_argument('--port', type=int, default=9001)
         peer.add_argument('--name', default=name)
+        peer.add_argument('--plain', action='store_true', help='Use scrolling text instead of the full-screen chat')
         if command == 'listen':
             peer.add_argument('--key-file', type=Path, default=DEFAULT_KEY_FILE)
     args = parser.parse_args(argv)
@@ -195,9 +257,9 @@ def main(argv=None):
         elif not 1 <= args.port <= 65535:
             raise ProtocolError('Port must be in 1..65535')
         elif args.command == 'listen':
-            listen(args.host, args.port, args.name, args.key_file)
+            listen(args.host, args.port, args.name, args.key_file, plain=args.plain)
         else:
-            connect(args.host, args.port, args.name)
+            connect(args.host, args.port, args.name, plain=args.plain)
     except KeyboardInterrupt:
         print('\nExiting.', flush=True)
         return 0

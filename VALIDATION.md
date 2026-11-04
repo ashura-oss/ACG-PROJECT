@@ -1,10 +1,24 @@
 # Network-mode validation
 
+## Current full-screen UI validation
+
+The complete updated suite passed **64 tests in 16.401 seconds**, with live
+Npcap capture explicitly enabled. This includes actual passive packet capture
+and quantum recovery, the full-screen UI wired to real encrypted sockets,
+Unicode draft preservation during incoming messages, rejected-input editing,
+scrolling, local display clearing, offline history, and narrow-screen headers.
+
+The UI uses prompt_toolkit 3.0.53. The original protocol, RSA-33 key exchange,
+and `shor.py` circuit are unchanged.
+
 Validated on 4 November 2026 using 64-bit Python 3.12.14 on Windows.
 
 ## Automated result
 
-`python -m unittest discover -s tests -v`: **54 tests passed** in 10.759 seconds.
+The initial implementation run of `python -m unittest discover -s tests -v`
+passed **54 tests** in 10.759 seconds. This is the historical result before the
+chat-interface changes and optional live-capture test described below; it is not
+an updated count for the expanded suite.
 
 - The original application and quantum tests continue to pass.
 - Independent Alice/Bob processes exchanged real TCP messages in both directions,
@@ -39,13 +53,32 @@ speed advantage. They are not a guarantee for another host or a VM.
 Test environment: cryptography 50.0.2, NumPy 2.3.5, Qiskit 2.6.1, Qiskit Aer
 0.18.2, Scapy 2.8.0.
 
-## Remaining presentation-machine check
+## Live Windows packet-capture check
 
-**Live Windows packet capture was not verified here:** this environment does not
-have the Npcap driver or an administrator token. The live command was checked to
-fail with an explicit Npcap prerequisite error instead of claiming capture was
-running. Offline reconstruction tests do not establish working live capture.
+After Npcap was installed, the opt-in test
+`test_optional_live_capture_quantum_recovery_and_independent_chat` passed on
+4 November 2026 in **3.203 seconds**, with
+`ACG_LIVE_CAPTURE_INTERFACE=\Device\NPF_Loopback`.
 
-After installing Npcap on the presentation laptop, follow `NETWORK_DEMO.md`:
-select the loopback interface, wait for `Capture ready`, start the chat, recover
-and decrypt both directions, and stop the observer while the chat continues.
+This test started the actual passive `capture.py` process before connecting
+independent Alice/Bob subprocesses on a temporary ephemeral port. It captured
+their real packets, reconstructed the public handshake and encrypted messages,
+and ran a fresh `intercept.py` process with the real Qiskit Aer Shor simulation.
+Both directions' messages authenticated and decrypted. The test then stopped
+the capture process and verified that both chat peers continued exchanging
+messages while the capture file remained unchanged. No synthetic packets,
+forwarding relay, endpoint-key input to the attacker, or automatic privilege
+elevation were used in this check.
+
+A subsequent focused run of all four network integration tests, with live
+capture explicitly enabled, passed in **8.898 seconds**. This includes actual
+bidirectional chat, the live capture/recovery/observer-stop check, synthetic
+PCAP reconstruction and fresh-process quantum recovery, and one quantum run
+reused across newly appended sessions. It does not replace the historical
+full-suite count above.
+
+This establishes live capture for this host's tested configuration, not every
+driver or OS. The earlier pre-Npcap check also verified that a missing driver
+produced an explicit prerequisite error. Run the three-terminal rehearsal on
+the presentation machine and optionally enable the live test as documented in
+`NETWORK_DEMO.md`.
