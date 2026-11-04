@@ -1,5 +1,20 @@
 # Network-mode validation
 
+## 248-bit RSA mode
+
+The full suite passed **80 tests in 19.581 seconds**, including the existing
+live Npcap test. Six new tests cover exact 248-bit key generation, the version-2
+seed exchange, actual bidirectional socket messages, metadata authentication,
+large-simulation rejection before allocation, and queued ciphertext after
+recovery failure. A live RSA-248 handshake was also captured after switching
+the two terminal peers to the new key profile.
+
+`benchmark_rsa248.py` verified 20 independent key/session round trips and 500
+4,096-byte message round trips. Exact timings are in
+`rsa248_benchmark_report.json`. The quantum attack was **not run**; its execution
+time is null and the resource projection is recorded separately. This is not a
+successful 248-bit factorization result.
+
 ## Interceptor dashboard validation
 
 The complete suite passed **74 tests in 20.529 seconds**, with live Npcap capture

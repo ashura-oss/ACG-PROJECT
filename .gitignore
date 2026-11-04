@@ -4,5 +4,6 @@ encrypted_package.json
 captures/
 chat_keys.json
 chat_private_key.json
+chat_keys_248.json
 transcripts/
 .pytest_cache/

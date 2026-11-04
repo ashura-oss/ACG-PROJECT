@@ -9,8 +9,18 @@ class AttackFailure(RuntimeError):
     pass
 
 
+def _require_supported(modulus, base):
+    if type(modulus) is int and modulus.bit_length() == 248 and type(base) is int and base == 5:
+        from rsa_modes import simulator_resources
+        resources = simulator_resources(modulus)
+        raise AttackFailure(f'RSA-248 exceeds local simulator capacity ({resources["total_qubits"]} qubits)')
+    if type(modulus) is not int or type(base) is not int or (modulus, base) != (33, 5):
+        raise ValueError('This simulator supports modulus 33 and base 5')
+
+
 def controlled_multiplier(multiplier, modulus=33):
     """Local qubit 0 is control; qubits 1..6 encode the residue."""
+    _require_supported(modulus, 5)
     import numpy as np
     if not 1 <= multiplier < modulus or math.gcd(multiplier, modulus) != 1:
         raise ValueError("Multiplier must be a coprime residue")
@@ -23,6 +33,7 @@ def controlled_multiplier(multiplier, modulus=33):
 
 
 def build_circuit(counting=12, modulus=33, base=5):
+    _require_supported(modulus, base)
     from qiskit import QuantumCircuit
     circuit = QuantumCircuit(counting + 6, counting)
     circuit.x(counting)
@@ -100,8 +111,7 @@ def run_factorization(seed=None, shots=1024, batches=3, timeout=30.0, *, modulus
     """Deadline includes child startup, imports, circuit preparation and simulation."""
     if shots < 1 or not 1 <= batches <= 3 or timeout <= 0:
         raise ValueError("Invalid simulation budget")
-    if type(modulus) is not int or type(base) is not int or (modulus, base) != (33, 5):
-        raise ValueError("This prototype supports only modulus 33 and base 5")
+    _require_supported(modulus, base)
     started = time.perf_counter()
     context = mp.get_context("spawn")
     receiver, sender = context.Pipe(duplex=False)
