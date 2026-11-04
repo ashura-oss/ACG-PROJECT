@@ -1,0 +1,2 @@
+# Chat endpoints only; no simulator or packet-capture driver is needed.
+cryptography>=43,<51

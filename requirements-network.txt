@@ -1,0 +1,4 @@
+-r requirements-chat.txt
+qiskit>=2,<3
+qiskit-aer>=0.17,<0.19
+scapy>=2.6,<3

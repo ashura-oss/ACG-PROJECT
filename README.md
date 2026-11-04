@@ -2,6 +2,8 @@
 
 Local Python CLI for an educational chain: AES-256-GCM encryption, toy RSA key protection, simulated quantum factorization, candidate AES-key recovery, and manual authenticated decryption.
 
+The [network chat demonstration](NETWORK_DEMO.md) adds two-way terminal chat and a separate **passive packet-capture and decryption tool**. Alice and Bob connect directly over TCP on one laptop; the observer records packets, queues encrypted messages, runs the existing Shor simulation, and decrypts the captured conversation. No relay or shared endpoint-secret file is used by the observer. The original menu demonstration below remains available.
+
 ## Setup and launch
 
 Tested with 64-bit Python 3.14 on Windows. From this directory in PowerShell:
@@ -12,7 +14,7 @@ py -3.14 -m venv .venv
 .\.venv\Scripts\python.exe main.py
 ```
 
-The supplied local `.venv` is ready to use. No IBM account or quantum hardware is required. The active package is `encrypted_package.json` beside `main.py`, regardless of the terminal's current directory.
+Create the local `.venv` using the commands above; it is not included in the repository. No IBM account or quantum hardware is required. The active package is `encrypted_package.json` beside `main.py`, regardless of the terminal's current directory.
 
 ## Rehearsal
 
