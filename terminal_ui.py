@@ -152,7 +152,6 @@ class TerminalChatUI:
                                    'scrollbar.background': '#162235',
                                    'scrollbar.button': '#5eead4',
                                }))
-        self._append_notice('Conversation started. Say hello.')
 
     def _header(self):
         state_style = 'class:connected' if self.connected else 'class:offline'
