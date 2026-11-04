@@ -5,5 +5,6 @@ captures/
 chat_keys.json
 chat_private_key.json
 chat_keys_248.json
+chat_keys_2048.json
 transcripts/
 .pytest_cache/

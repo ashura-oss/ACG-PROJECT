@@ -10,10 +10,10 @@ class AttackFailure(RuntimeError):
 
 
 def _require_supported(modulus, base):
-    if type(modulus) is int and modulus.bit_length() == 248 and type(base) is int and base == 5:
+    if type(modulus) is int and modulus.bit_length() in (248, 2048) and type(base) is int and base == 5:
         from rsa_modes import simulator_resources
         resources = simulator_resources(modulus)
-        raise AttackFailure(f'RSA-248 exceeds local simulator capacity ({resources["total_qubits"]} qubits)')
+        raise AttackFailure(f'RSA-{modulus.bit_length()} exceeds local simulator capacity ({resources["total_qubits"]} qubits)')
     if type(modulus) is not int or type(base) is not int or (modulus, base) != (33, 5):
         raise ValueError('This simulator supports modulus 33 and base 5')
 

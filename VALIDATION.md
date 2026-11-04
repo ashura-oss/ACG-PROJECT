@@ -1,5 +1,26 @@
 # Network-mode validation
 
+## RSA-2048 OAEP mode
+
+On 4 November 2026 the full suite passed **87 tests in 25.155 seconds**, with
+both optional live Npcap tests enabled on `\Device\NPF_Loopback`. The RSA-2048
+test used separate Alice/Bob subprocesses and actual passive packet capture,
+verified both message directions and the version-3 OAEP handshake, and confirmed
+that the observer retained both ciphertexts without recovering the key. It then
+stopped capture and verified that both chat directions continued working.
+
+Additional RSA-2048 tests cover the default 2048-bit setup, private-file reload,
+OAEP label/ciphertext tampering, authenticated records, empty/Unicode/4096-byte
+messages, socket handshakes, and simulator rejection before worker creation.
+The original RSA-33 live quantum recovery and all UI tests also passed.
+
+`benchmark_rsa.py --bits 2048 --trials 20` verified 20 independently generated
+keys/session exchanges and 500 message round trips. Median wrap/unwrap times
+were **0.63/2.54 ms**; 4096-byte message encryption/decryption took
+**0.19/0.24 ms**. Full operation timings and dependency versions are recorded in
+`rsa2048_benchmark_report.json`. Quantum execution was not run at this size;
+the report records a null time and the simulator resource-limit result.
+
 ## 248-bit RSA mode
 
 The full suite passed **80 tests in 19.581 seconds**, including the existing

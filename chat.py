@@ -15,7 +15,7 @@ from rsa_modes import generate_key, validate_private, validate_public
 DEFAULT_KEY_FILE = Path(__file__).with_name('chat_private_key.json')
 
 
-def setup_key(path, bits=6):
+def setup_key(path, bits=2048):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     # This is the legitimate receiver's educational private key. The passive
@@ -34,8 +34,8 @@ def setup_key(path, bits=6):
 def load_key(path):
     try:
         with Path(path).open('r', encoding='utf-8') as stream:
-            text = stream.read(1025)
-        if len(text) > 1024:
+            text = stream.read(16385)
+        if len(text) > 16384:
             raise ValueError('Oversized key file')
         key = json.loads(text)
     except (OSError, ValueError) as error:
@@ -255,8 +255,8 @@ def main(argv=None):
     commands = parser.add_subparsers(dest='command', required=True)
     setup = commands.add_parser('setup', help='Create the receiver key file')
     setup.add_argument('--key-file', type=Path, default=DEFAULT_KEY_FILE)
-    setup.add_argument('--bits', type=int, choices=(6, 248), default=6,
-                       help='RSA modulus size: 6 for RSA-33, or 248')
+    setup.add_argument('--bits', type=int, choices=(6, 248, 2048), default=2048,
+                       help='RSA modulus size (default: 2048; use 6 for RSA-33)')
     for command, name in (('listen', 'Bob'), ('connect', 'Alice')):
         peer = commands.add_parser(command)
         peer.add_argument('--host', default='127.0.0.1')

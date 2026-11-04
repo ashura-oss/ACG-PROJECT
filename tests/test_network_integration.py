@@ -72,7 +72,7 @@ class NetworkIntegrationTests(unittest.TestCase):
     def test_real_tcp_chat_subprocesses_exchange_both_directions(self):
         """No capture driver, relay, fixture packets, or mocked crypto is involved."""
         key_path = self.directory / 'bob-private.json'
-        self.run_cli('chat.py', 'setup', '--key-file', key_path)
+        self.run_cli('chat.py', 'setup', '--bits', 6, '--key-file', key_path)
         with socket.socket() as probe:
             probe.bind(('127.0.0.1', 0))
             port = probe.getsockname()[1]
@@ -262,6 +262,15 @@ class NetworkIntegrationTests(unittest.TestCase):
                          'Set ACG_LIVE_CAPTURE_INTERFACE to opt into OS packet capture')
     def test_optional_live_capture_quantum_recovery_and_independent_chat(self):
         """Capture real loopback packets; no fixture, proxy, or elevation is used."""
+        self._check_live_capture(bits=6)
+
+    @unittest.skipUnless(os.environ.get('ACG_LIVE_CAPTURE_INTERFACE'),
+                         'Set ACG_LIVE_CAPTURE_INTERFACE to opt into OS packet capture')
+    def test_optional_live_rsa2048_capture_and_independent_chat(self):
+        """Real OAEP chat works while the passive observer retains ciphertext."""
+        self._check_live_capture(bits=2048)
+
+    def _check_live_capture(self, *, bits):
         interface = os.environ['ACG_LIVE_CAPTURE_INTERFACE']
         with socket.socket() as probe:
             probe.bind(('127.0.0.1', 0))
@@ -306,7 +315,7 @@ class NetworkIntegrationTests(unittest.TestCase):
                 self.fail('Live capture did not become ready:\n' + ''.join(capture_lines))
 
         key_path = self.directory / 'live-bob-private.json'
-        self.run_cli('chat.py', 'setup', '--key-file', key_path)
+        self.run_cli('chat.py', 'setup', '--bits', bits, '--key-file', key_path)
         bob, bob_log = self.start_peer('live-bob', 'listen', '--host',
                                        '127.0.0.1', '--port', port,
                                        '--name', 'Bob', '--key-file', key_path)
@@ -341,11 +350,32 @@ class NetworkIntegrationTests(unittest.TestCase):
             time.sleep(0.05)
         self.assertNotIn(alice_text, raw)
         self.assertNotIn(bob_text, raw)
-        recovered = self.run_cli('intercept.py', '--capture', capture_path,
-                                 '--decrypt-all', '--seed', 42)
-        self.assertIn(alice_text, recovered.stdout)
-        self.assertIn(bob_text, recovered.stdout)
-        self.assertIn('RSA key recovered', recovered.stdout)
+        headers = [event['frame']['header'] for event in events
+                   if event.get('event') == 'frame' and event['frame'].get('type') == 'session']
+        self.assertEqual(len(headers), 1)
+        self.assertEqual(headers[0]['N'].bit_length(), bits)
+        if bits == 2048:
+            self.assertEqual(headers[0]['version'], 3)
+            self.assertEqual(headers[0]['key_encoding'], 'RSA-OAEP-SHA256')
+            result = subprocess.run(command('intercept.py', '--capture', capture_path,
+                                            '--decrypt-all', '--seed', 42),
+                                    cwd=self.directory, env=self.environment, capture_output=True,
+                                    text=True, encoding='utf-8', timeout=15)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('RSA-2048 exceeds local simulator capacity', result.stdout)
+            self.assertNotIn(alice_text, result.stdout)
+            self.assertNotIn(bob_text, result.stdout)
+            from intercept import CaptureQueue
+            queue = CaptureQueue(capture_path, output=lambda _: None)
+            self.assertEqual(queue.decrypt_all(), [])
+            self.assertEqual(queue.status()[0]['pending'], 2)
+            self.assertFalse(queue.private_exponents)
+        else:
+            recovered = self.run_cli('intercept.py', '--capture', capture_path,
+                                     '--decrypt-all', '--seed', 42)
+            self.assertIn(alice_text, recovered.stdout)
+            self.assertIn(bob_text, recovered.stdout)
+            self.assertIn('RSA key recovered', recovered.stdout)
 
         # The observer is not a relay: both directions must still work after it exits.
         stop_capture()

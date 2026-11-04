@@ -1,6 +1,7 @@
-"""Educational RSA-33 session establishment and authenticated chat records.
+"""RSA session establishment and authenticated chat records.
 
-The transport is framed TCP, not TLS. RSA-33 is deliberately insecure. Names
+The transport is framed TCP, not TLS. RSA-2048 uses OAEP-SHA256; the optional
+RSA-33 and RSA-248 profiles are educational weak-key modes. Names
 are display labels, not authenticated identities. Both directions have their
 own derived AES key and monotonically increasing nonce counter.
 """
@@ -15,7 +16,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from toy_rsa import unwrap_key, wrap_key
-from rsa_modes import validate_public
+from rsa_modes import validate_public, private_key_object, public_key_object
 
 MAX_FRAME_BYTES = 16384
 MAX_MESSAGE_BYTES = 4096
@@ -26,6 +27,9 @@ _HEADER_FIELDS = set(HEADER_CONSTANTS) | {'session_id', 'alice', 'bob', 'wrapped
 _HEADER_V2_CONSTANTS = {**HEADER_CONSTANTS, 'version': 2, 'e': 65537,
                         'key_encoding': 'RSA-SEED-128'}
 _HEADER_V2_FIELDS = set(_HEADER_V2_CONSTANTS) | {'session_id', 'alice', 'bob', 'wrapped_seed_hex'}
+_HEADER_V3_CONSTANTS = {**HEADER_CONSTANTS, 'version': 3, 'e': 65537,
+                        'key_encoding': 'RSA-OAEP-SHA256'}
+_HEADER_V3_FIELDS = set(_HEADER_V3_CONSTANTS) | {'session_id', 'alice', 'bob', 'wrapped_key_hex'}
 _RECORD_FIELDS = {'type', 'session_id', 'direction', 'sequence', 'ciphertext_and_tag_hex'}
 
 
@@ -97,12 +101,16 @@ def validate_header(header):
     if type(header) is not dict or type(header.get('version')) is not int:
         raise ProtocolError('Invalid session header fields')
     version = header['version']
-    fields = _HEADER_FIELDS if version == 1 else _HEADER_V2_FIELDS
-    if version not in (1, 2) or set(header) != fields:
+    profiles = {1: (_HEADER_FIELDS, HEADER_CONSTANTS),
+                2: (_HEADER_V2_FIELDS, _HEADER_V2_CONSTANTS),
+                3: (_HEADER_V3_FIELDS, _HEADER_V3_CONSTANTS)}
+    if version not in profiles:
         raise ProtocolError('Invalid session header fields')
-    constants = HEADER_CONSTANTS if version == 1 else _HEADER_V2_CONSTANTS
+    fields, constants = profiles[version]
+    if set(header) != fields:
+        raise ProtocolError('Invalid session header fields')
     for field, expected in constants.items():
-        if field == 'N' and version == 2:
+        if field == 'N' and version in (2, 3):
             continue
         if type(header[field]) is not type(expected) or header[field] != expected:
             raise ProtocolError(f'Unsupported session parameter: {field}')
@@ -119,17 +127,26 @@ def validate_header(header):
         if (type(digits) is not list or len(digits) != 64 or
                 any(type(value) is not int or not 0 <= value < 33 for value in digits)):
             raise ProtocolError('Wrapped key must contain 64 integers in 0..32')
-    else:
+    elif version == 2:
         wrapped = header['wrapped_seed_hex']
         if (type(wrapped) is not str or re.fullmatch('[0-9a-f]{62}', wrapped) is None or
                 int(wrapped, 16) >= header['N']):
             raise ProtocolError('Invalid wrapped session seed')
+    else:
+        wrapped = header['wrapped_key_hex']
+        if (type(wrapped) is not str or re.fullmatch('[0-9a-f]{512}', wrapped) is None or
+                int(wrapped, 16) >= header['N']):
+            raise ProtocolError('Invalid wrapped session key')
     return header
 
 
 def _seed_master(seed, session_id):
     return HKDF(algorithm=hashes.SHA256(), length=32, salt=bytes.fromhex(session_id),
                 info=b'ACG-CHAT-v2/master').derive(seed)
+
+
+def _oaep_label(header):
+    return canonical({field: value for field, value in header.items() if field != 'wrapped_key_hex'})
 
 
 def create_session(alice, bob, *, public_key=(33, 3)):
@@ -140,6 +157,16 @@ def create_session(alice, bob, *, public_key=(33, 3)):
         version = validate_public(modulus, exponent)
     except (ValueError, TypeError) as error:
         raise ProtocolError('Invalid RSA public key') from error
+    if version == 3:
+        from Crypto.Cipher import PKCS1_OAEP
+        from Crypto.Hash import SHA256
+        master = AESGCM.generate_key(bit_length=256)
+        header = {**_HEADER_V3_CONSTANTS, 'N': modulus, 'session_id': uuid.uuid4().hex,
+                  'alice': alice, 'bob': bob}
+        cipher = PKCS1_OAEP.new(public_key_object(modulus, exponent), hashAlgo=SHA256,
+                               label=_oaep_label(header))
+        header['wrapped_key_hex'] = cipher.encrypt(master).hex()
+        return validate_header(header), master
     if version == 2:
         session_id = uuid.uuid4().hex
         seed = secrets.token_bytes(16)
@@ -168,6 +195,18 @@ def recover_master(header, private_exponent):
     validate_header(header)
     if type(private_exponent) is not int or not 1 <= private_exponent < header['N']:
         raise ProtocolError('Invalid RSA private exponent')
+    if header['version'] == 3:
+        from Crypto.Cipher import PKCS1_OAEP
+        from Crypto.Hash import SHA256
+        try:
+            key = private_key_object(header['N'], header['e'], private_exponent)
+            cipher = PKCS1_OAEP.new(key, hashAlgo=SHA256, label=_oaep_label(header))
+            master = cipher.decrypt(bytes.fromhex(header['wrapped_key_hex']))
+            if len(master) != 32:
+                raise ValueError('Invalid session key length')
+            return master
+        except (ValueError, TypeError) as error:
+            raise ProtocolError('RSA key unwrap failed') from error
     if header['version'] == 2:
         wrapped = int(header['wrapped_seed_hex'], 16)
         seed = pow(wrapped, private_exponent, header['N'])

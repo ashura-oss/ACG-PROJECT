@@ -1,13 +1,13 @@
-# Connected RSA-33 demonstration
+# RSA chat and quantum interception demonstration
 
-The chat also supports a [248-bit RSA timing mode](RSA248_TIMINGS.md). It measures
-normal key exchange and message processing; the local simulator cannot execute
-Shor at that size. See `rsa248_benchmark_report.json` for measured operations and
-the separate resource-limit result.
+New chat keys default to [RSA-2048 with OAEP-SHA256](RSA2048.md).
+The [RSA-33 rehearsal](NETWORK_DEMO.md) runs the existing Shor simulation and
+decrypts captured chat. The optional [248-bit timing mode](RSA248_TIMINGS.md)
+remains available. The local simulator cannot execute Shor at 248 or 2048 bits.
 
 Local Python CLI for an educational chain: AES-256-GCM encryption, toy RSA key protection, simulated quantum factorization, candidate AES-key recovery, and manual authenticated decryption.
 
-The [network chat demonstration](NETWORK_DEMO.md) adds two-way terminal chat and a separate **passive packet-capture and decryption tool**. Alice and Bob connect directly over TCP on one laptop; the observer records packets, queues encrypted messages, runs the existing Shor simulation, and decrypts the captured conversation. No relay or shared endpoint-secret file is used by the observer. The original menu demonstration below remains available.
+The [network chat demonstration](NETWORK_DEMO.md) adds two-way terminal chat and a separate **passive packet-capture and decryption tool**. Alice and Bob connect directly over TCP on one laptop; Interceptor records packets and queues encrypted messages. RSA-33 permits recovery using the existing Shor simulation; RSA-2048 messages stay encrypted in the queue. The observer receives no endpoint-secret file. The original menu demonstration below remains available.
 
 ## Setup and launch
 
