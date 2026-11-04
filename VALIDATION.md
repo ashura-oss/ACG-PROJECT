@@ -1,5 +1,16 @@
 # Network-mode validation
 
+## Interceptor dashboard validation
+
+The complete suite passed **74 tests in 20.529 seconds**, with live Npcap capture
+enabled. Interceptor's dashboard was rendered at 80×24 and 120×36 and verified
+to retain its queue, traffic, evidence and command controls. Its headless
+integration test executed real Shor recovery, displayed only authenticated
+messages, preserved a typed command during recovery, followed newly appended
+traffic, and rejected a tampered message. Controller tests also verified that
+submitting commands stays responsive while recovery runs and that closing the
+dashboard does not stop a separately owned packet collector.
+
 ## Current full-screen UI validation
 
 The complete updated suite passed **64 tests in 16.401 seconds**, with live

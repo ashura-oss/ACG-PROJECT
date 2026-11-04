@@ -77,9 +77,11 @@ PgUp/PgDn scroll the conversation while keeping the composer focused; Ctrl+End r
 
 When input or output is redirected, the peers use a plain line-oriented interface for scripts and logs. Add `--plain` to either the `listen` or `connect` command to choose that interface explicitly. Both interfaces use the same protocol and commands. Educational explanations and limitations are kept in this document so the chat screen can focus on the conversation.
 
-## Attacker commands
+## Interceptor dashboard
 
-In Terminal C, use:
+Terminal C is **Interceptor**, a dedicated dashboard in an interactive terminal. It separates capture status and session counts, quantum recovery evidence, authenticated conversation text, and a command bar. Packet capture and key recovery run outside the UI event loop, so the dashboard can redraw and preserve an unfinished command during Shor simulation.
+
+Use F2 to recover keys, F3 to decrypt the queued messages, and F4 to toggle follow mode. Ctrl+C or `quit` exits the dashboard. The command bar also accepts:
 
 ```text
 status
@@ -88,7 +90,9 @@ decrypt-all
 follow
 ```
 
-`status` refreshes the captured-session queue. `recover` executes quantum order finding and prints its measurement evidence; recovered session secrets remain candidates until an AES-GCM tag verifies. `decrypt-all` recovers keys if needed and authenticates the backlog. `follow` processes incoming messages; press Ctrl+C to return to the interactive prompt. `export transcripts/conversation.jsonl` saves authenticated plaintext records, and `quit` stops the observer and its capture process.
+`status` refreshes the captured-session queue. `recover` executes quantum order finding and displays its measurement evidence; recovered session secrets remain candidates until an AES-GCM tag verifies. `decrypt-all` recovers keys if needed and authenticates the backlog. `follow` enables live processing of incoming messages; `unfollow` pauses it, and F4 toggles between them. `export transcripts/conversation.jsonl` saves authenticated plaintext records, and `quit` stops the observer and any capture process it started. The chat peers continue independently.
+
+Add `--plain` to `intercept.py` to use the line-oriented command prompt instead, or redirect input/output to select it automatically. In plain mode, `follow` runs until Ctrl+C returns to the prompt; Ctrl+C outside follow mode exits. Noninteractive `--decrypt-all` and `--follow` remain available for scripts.
 
 An RSA private exponent recovered from measurements is reused for later sessions with the same public key. Each session still has its own secret and directional traffic keys. Shor is not rerun for each message. If quantum recovery fails, sessions remain queued and the error is reported; there is no classical factorization fallback.
 

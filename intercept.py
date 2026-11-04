@@ -408,6 +408,35 @@ def interactive(queue, process=None):
                 return 1
 
 
+def launch_dashboard(queue, process=None, interface=None, port=9001, *, follow_mode=False,
+                     input=None, output=None):
+    """Run the interceptor dashboard against an existing capture and queue.
+
+    Capture-process ownership stays with the caller. In particular this works
+    with a health adapter for a collector started by a different terminal.
+    """
+    from interceptor_controller import InterceptorController
+    from interceptor_ui import InterceptorUI
+    controller = InterceptorController(queue, process, interface=interface, port=port)
+    ui = None
+    def quit_dashboard():
+        controller.close(wait=False)
+        if ui is not None:
+            ui.stop()
+    ui = InterceptorUI(controller.submit, quit_dashboard, input=input, output=output)
+    controller.attach_ui(ui)
+    try:
+        controller.start()
+        if follow_mode:
+            controller.submit('follow')
+        ui.run()
+    finally:
+        ui.stop()
+        if not controller.close(wait=True):
+            raise RuntimeError('Interceptor worker did not stop within its quantum deadline')
+    return 0
+
+
 def _wait_capture_ready(process, queue):
     """Drain capture output and require readiness before starting the prompt."""
     ready = threading.Event()
@@ -431,6 +460,7 @@ def main(argv=None):
     parser.add_argument('--interface', help='Capture interface name; see capture.py --list-interfaces')
     parser.add_argument('--port', type=int, default=9001, help='Chat TCP port for live capture')
     parser.add_argument('--seed', type=int, help='Optional reproducible Aer simulator seed')
+    parser.add_argument('--plain', action='store_true', help='Use the plain command prompt instead of the dashboard')
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--decrypt-all', action='store_true', help='Recover and decrypt the existing capture, then exit')
     mode.add_argument('--follow', action='store_true', help='Recover and decrypt continually until Ctrl+C')
@@ -464,6 +494,8 @@ def main(argv=None):
             return 0 if sessions and not queue.errors and not queue.unassigned_records and not queue.has_partial_line and all(
                 session['pending'] == 0 and session['errors'] == 0 and session['state'] in
                 ('DECRYPTED', 'KEY_RECOVERED') for session in sessions) else 1
+        if not args.plain and sys.stdin.isatty() and sys.stdout.isatty():
+            return launch_dashboard(queue, process, args.interface, args.port, follow_mode=args.follow)
         if args.follow:
             follow(queue, process, return_to_prompt=False)
         else:
