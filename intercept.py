@@ -202,7 +202,7 @@ class CaptureQueue:
             raise CaptureError('Unknown wire frame type')
 
     def _show_evidence(self, evidence, private_exponent):
-        self.output('Quantum measurement evidence (Qiskit Aer, classical simulation):')
+        self.output('Quantum measurement evidence · Qiskit Aer')
         for bits, count in sorted(evidence['counts'].items(), key=lambda item: (-item[1], item[0]))[:6]:
             self.output(f'  {bits}: {count}')
         self.output(f"Accepted sample: {evidence['sample']}; phase: {evidence['phase']:.6f}")
@@ -222,7 +222,7 @@ class CaptureQueue:
             if public_key not in self.private_exponents:
                 if public_key in self.recovery_errors and not retry:
                     continue
-                self.output(f'Running Shor simulation for public N={public_key[0]}, base=5 ...')
+                self.output(f'Running Shor · N={public_key[0]} · base=5 ...')
                 try:
                     evidence = run_factorization(seed=self.seed, modulus=public_key[0], base=5)
                     factors = evidence['factors']
@@ -240,14 +240,14 @@ class CaptureQueue:
                     self.recovery_errors.pop(public_key, None)
                 except (AttackFailure, ValueError, KeyError, TypeError, OSError) as error:
                     self.recovery_errors[public_key] = _display(error)
-                    self.output(f'Recovery failed: {_display(error)}. Sessions remain queued; no classical fallback.')
+                    self.output(f'Recovery failed: {_display(error)}. Messages remain queued.')
                     # No second attempt for other sessions sharing this key in
                     # the same command, regardless of retry preference.
                     break
             try:
                 session.master = recover_master(header, self.private_exponents[public_key])
                 recovered += 1
-                self.output(f'Recovered candidate session key for {session_id[:8]}; authentication pending.')
+                self.output(f'Session key recovered · {session_id[:8]}')
             except ValueError as error:
                 self.output(f'Cannot unwrap session {session_id[:8]}: {_display(error)}')
         return recovered
@@ -331,7 +331,7 @@ class CaptureQueue:
 def print_status(queue):
     sessions = queue.status()
     if not sessions:
-        queue.output('No session handshakes captured yet. Start capture before connecting A to B.')
+        queue.output('No sessions captured yet.')
     else:
         queue.output('SESSION   PEERS                  CAPTURED  PENDING  DECRYPTED  ERRORS  STATE')
         for session in sessions:
@@ -340,11 +340,11 @@ def print_status(queue):
                          f"{session['pending']:7}  {session['decrypted']:9}  "
                          f"{session['errors']:6}  {session['state']}")
     if queue.unassigned_records:
-        queue.output(f'{queue.unassigned_records} records lack a captured handshake and cannot be decrypted.')
+        queue.output(f'{queue.unassigned_records} records missing a session handshake.')
     if queue.errors:
-        queue.output(f'{len(queue.errors)} capture warning(s); inspect output for missing or invalid data.')
+        queue.output(f'{len(queue.errors)} capture warning(s).')
     if queue.has_partial_line:
-        queue.output('Capture ends with an incomplete JSONL event; waiting for its remaining bytes.')
+        queue.output('Waiting for an incomplete JSONL event.')
 
 
 def _capture_health(process):
@@ -353,9 +353,8 @@ def _capture_health(process):
 
 
 def follow(queue, process=None, return_to_prompt=True):
-    ending = ('stops follow mode; chat and capture continue' if return_to_prompt else
-              'exits the attacker tool and its capture process; chat continues')
-    queue.output(f'Following captured messages. Ctrl+C {ending}.')
+    ending = 'return' if return_to_prompt else 'exit'
+    queue.output(f'Following messages · Ctrl+C to {ending}.')
     try:
         while True:
             _capture_health(process)
@@ -365,10 +364,7 @@ def follow(queue, process=None, return_to_prompt=True):
         queue.output('\nStopped following.')
 
 
-HELP = ('Commands: status | recover | decrypt-all | follow | export PATH | help | quit\n'
-        'recover runs measured quantum order finding; decrypt-all authenticates each record.\n'
-        'Capture must include the session handshake. RSA-33 is deliberately insecure;\n'
-        'a CPU quantum simulation demonstrates the attack mechanism, not quantum speed advantage.')
+HELP = 'Commands: status | recover | decrypt-all | follow | export PATH | help | quit'
 
 
 def interactive(queue, process=None):
@@ -454,7 +450,7 @@ def main(argv=None):
             command = [sys.executable, str(Path(__file__).with_name('capture.py')),
                        '--interface', args.interface, '--port', str(args.port),
                        '--output', args.capture]
-            queue.output('Starting passive capture. Wait for "Capture ready" before connecting the chat.')
+            queue.output(f'Starting capture · {args.interface} · TCP {args.port} ...')
             options = ({'creationflags': subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP}
                        if sys.platform == 'win32'
                        else {'start_new_session': True})

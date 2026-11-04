@@ -296,8 +296,7 @@ def capture(args):
                 sniff(iface=args.interface, filter=f'tcp port {args.port}', store=False,
                       prn=observe,
                       started_callback=lambda: print(
-                          f'Capture ready on {args.interface}, TCP port {args.port}. '
-                          'Start the chat connection now.', flush=True))
+                          f'Capture ready on {args.interface}, TCP port {args.port}.', flush=True))
         finally:
             observer.finish()
             if raw_capture is not None:
