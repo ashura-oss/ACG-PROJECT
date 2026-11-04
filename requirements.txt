@@ -1,0 +1,14 @@
+cffi==2.1.1
+cryptography==50.0.2
+dill==0.4.1
+numpy==2.5.4
+psutil==7.2.2
+pycparser==3.12
+python-dateutil==4.0.0
+qiskit==2.6.1
+qiskit-aer==0.18.2
+rustworkx==0.18.1
+scipy==1.18.1
+stevedore==5.9.1
+typing_extensions==4.16.0
+tzdata==2026.6
