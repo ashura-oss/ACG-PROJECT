@@ -1,4 +1,4 @@
-"""Two-way terminal chat using RSA-33 session exchange and AES-GCM."""
+"""Two-way terminal chat using RSA session exchange and AES-GCM."""
 import argparse
 import json
 from pathlib import Path
@@ -6,21 +6,23 @@ import socket
 import sys
 import threading
 
-from chat_protocol import (FrameReader, HEADER_CONSTANTS, ProtocolError,
+from chat_protocol import (FrameReader, ProtocolError,
                            RecordReceiver, create_session, encode_frame,
                            encrypt_record, recover_master, validate_header,
                            validate_name)
+from rsa_modes import generate_key, validate_private, validate_public
 
 DEFAULT_KEY_FILE = Path(__file__).with_name('chat_private_key.json')
 
 
-def setup_key(path):
+def setup_key(path, bits=2048):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     # This is the legitimate receiver's educational private key. The passive
     # attacker never reads this file and reconstructs d from measured factors.
+    key = generate_key(bits)
     with path.open('x', encoding='utf-8') as stream:
-        json.dump({'N': 33, 'e': 3, 'd': 7}, stream, indent=2)
+        json.dump(key, stream, indent=2)
         stream.write('\n')
     try:
         path.chmod(0o600)
@@ -32,17 +34,16 @@ def setup_key(path):
 def load_key(path):
     try:
         with Path(path).open('r', encoding='utf-8') as stream:
-            text = stream.read(1025)
-        if len(text) > 1024:
+            text = stream.read(16385)
+        if len(text) > 16384:
             raise ValueError('Oversized key file')
         key = json.loads(text)
     except (OSError, ValueError) as error:
         raise ProtocolError(f'Cannot load receiver key; run chat.py setup first: {error}') from error
-    if (type(key) is not dict or set(key) != {'N', 'e', 'd'} or
-            any(type(key[field]) is not int for field in key) or
-            key['N'] != 33 or key['e'] != 3 or not 1 <= key['d'] < 33 or
-            any(pow(pow(digit, 3, 33), key['d'], 33) != digit for digit in range(33))):
-        raise ProtocolError('Invalid RSA-33 receiver key file')
+    try:
+        validate_private(key)
+    except ValueError as error:
+        raise ProtocolError('Invalid receiver RSA key file') from error
     return key
 
 
@@ -56,14 +57,19 @@ def _required(reader):
 def client_handshake(connection, reader, name):
     validate_name(name)
     greeting = _required(reader)
-    expected = {'type': 'public_key', 'protocol': 'ACG-CHAT', 'version': 1, 'N': 33, 'e': 3}
+    try:
+        version = validate_public(greeting.get('N'), greeting.get('e'))
+    except ValueError as error:
+        raise ProtocolError('Unsupported server RSA key') from error
+    expected = {'type': 'public_key', 'protocol': 'ACG-CHAT', 'version': version,
+                'N': greeting['N'], 'e': greeting['e']}
     if set(greeting) != set(expected) | {'name'}:
         raise ProtocolError('Invalid server public-key greeting')
     for field, value in expected.items():
         if type(greeting[field]) is not type(value) or greeting[field] != value:
             raise ProtocolError('Unsupported server public-key greeting')
     validate_name(greeting['name'])
-    header, master = create_session(name, greeting['name'])
+    header, master = create_session(name, greeting['name'], public_key=(greeting['N'], greeting['e']))
     connection.sendall(encode_frame({'type': 'session', 'header': header}))
     ready = _required(reader)
     if ready != {'type': 'ready', 'session_id': header['session_id']}:
@@ -71,14 +77,18 @@ def client_handshake(connection, reader, name):
     return header, master
 
 
-def server_handshake(connection, reader, name, private_exponent):
+def server_handshake(connection, reader, name, private_exponent, *, public_key=(33, 3)):
     validate_name(name)
-    greeting = {field: HEADER_CONSTANTS[field] for field in ('protocol', 'version', 'N', 'e')}
+    modulus, exponent = public_key
+    version = validate_public(modulus, exponent)
+    greeting = {'protocol': 'ACG-CHAT', 'version': version, 'N': modulus, 'e': exponent}
     connection.sendall(encode_frame({'type': 'public_key', **greeting, 'name': name}))
     frame = _required(reader)
     if set(frame) != {'type', 'header'} or frame['type'] != 'session':
         raise ProtocolError('Invalid session handshake')
     header = validate_header(frame['header'])
+    if (header['N'], header['e']) != public_key:
+        raise ProtocolError('Session RSA key does not match the server key')
     if header['bob'] != name:
         raise ProtocolError('Session receiver label does not match the greeting')
     master = recover_master(header, private_exponent)
@@ -125,7 +135,9 @@ def run_interactive_chat(connection, reader, header, master, role):
         stopped.set()
         _shutdown(connection)
 
-    ui = TerminalChatUI(own_name, peer_name, header['session_id'], send, quit_chat)
+    rsa_label = 'RSA-33' if header['N'] == 33 else f'RSA-{header["N"].bit_length()}'
+    ui = TerminalChatUI(own_name, peer_name, header['session_id'], send, quit_chat,
+                        rsa_label=rsa_label)
 
     def receive():
         try:
@@ -227,7 +239,8 @@ def listen(host, port, name, key_file, plain=False):
             connection.settimeout(10)
             reader = FrameReader(connection)
             try:
-                header, master = server_handshake(connection, reader, name, key['d'])
+                header, master = server_handshake(connection, reader, name, key['d'],
+                                                   public_key=(key['N'], key['e']))
                 connection.settimeout(None)
                 run_chat(connection, reader, header, master, 'bob', plain=plain)
             finally:
@@ -242,6 +255,8 @@ def main(argv=None):
     commands = parser.add_subparsers(dest='command', required=True)
     setup = commands.add_parser('setup', help='Create the receiver key file')
     setup.add_argument('--key-file', type=Path, default=DEFAULT_KEY_FILE)
+    setup.add_argument('--bits', type=int, choices=(6, 248, 2048), default=2048,
+                       help='RSA modulus size (default: 2048; use 6 for RSA-33)')
     for command, name in (('listen', 'Bob'), ('connect', 'Alice')):
         peer = commands.add_parser(command)
         peer.add_argument('--host', default='127.0.0.1')
@@ -253,7 +268,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.command == 'setup':
-            setup_key(args.key_file)
+            setup_key(args.key_file, bits=args.bits)
         elif not 1 <= args.port <= 65535:
             raise ProtocolError('Port must be in 1..65535')
         elif args.command == 'listen':

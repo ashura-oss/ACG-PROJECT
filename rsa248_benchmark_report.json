@@ -1,0 +1,65 @@
+{
+  "python": "3.12.14",
+  "platform": "Windows-11-10.0.26300-SP0",
+  "versions": {
+    "cryptography": "50.0.2",
+    "pycryptodome": "3.24.1",
+    "qiskit": "2.6.1",
+    "qiskit-aer": "0.18.2"
+  },
+  "rsa_bits": 248,
+  "public_modulus": 316823855138196637401607484275690127376782564805531018634271946797052449221,
+  "public_exponent": 65537,
+  "session_seed_bits": 128,
+  "operation_roundtrips_passed": true,
+  "timings": {
+    "key_generation": {
+      "trials": 20,
+      "median_ms": 6.2372000011237105,
+      "min_ms": 2.740500000072643,
+      "max_ms": 32.6271000012639,
+      "p95_ms": 32.6271000012639
+    },
+    "session_wrap": {
+      "trials": 20,
+      "median_ms": 0.04850000004807953,
+      "min_ms": 0.029599999834317714,
+      "max_ms": 0.6824000010965392,
+      "p95_ms": 0.6824000010965392
+    },
+    "session_unwrap": {
+      "trials": 20,
+      "median_ms": 0.10130000009667128,
+      "min_ms": 0.09170000339508988,
+      "max_ms": 0.12360000255284831,
+      "p95_ms": 0.12360000255284831
+    },
+    "encrypt_message_4096_bytes": {
+      "trials": 500,
+      "median_ms": 0.15870000061113387,
+      "min_ms": 0.14659999942523427,
+      "max_ms": 0.6090000024414621,
+      "p95_ms": 0.24000000121304765
+    },
+    "decrypt_message_4096_bytes": {
+      "trials": 500,
+      "median_ms": 0.20369999765534885,
+      "min_ms": 0.1919999995152466,
+      "max_ms": 1.7316000012215227,
+      "p95_ms": 0.27939999927184545
+    }
+  },
+  "quantum_attack": {
+    "status": "not_run_resource_limit",
+    "execution_seconds": null,
+    "reason": "RSA-248 exceeds local simulator capacity (744 qubits)",
+    "layout_projection": {
+      "work_qubits": 248,
+      "counting_qubits": 496,
+      "total_qubits": 744,
+      "statevector_bytes": 1480596630383213935040454376661779933220754639736839877261211431528140022932412039118650826290747144651878100106364319997951107067217649833149230265656644000248389221211290269422784124023054547143233298486439198256390425542656,
+      "controlled_matrix_bytes": 13093562431584567480052758787310396608866568184172259157933165472384535185618698219533080369303616628603546736510240284036869026183541572213314110357504
+    },
+    "note": "Extending this dense-matrix/statevector layout; not a bound for every Shor implementation."
+  }
+}

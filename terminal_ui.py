@@ -65,10 +65,11 @@ class TerminalChatUI:
     It may call notice with a short validation error before returning False.
     """
     def __init__(self, own_name, peer_name, session_id, on_send, on_quit,
-                 *, input=None, output=None):
+                 *, input=None, output=None, rsa_label='RSA-33'):
         self.own_name = _display(own_name)
         self.peer_name = _display(peer_name)
         self.session_id = str(session_id)
+        self.rsa_label = _display(rsa_label)
         self.on_send = on_send
         self.on_quit = on_quit
         self.connected = True
@@ -168,7 +169,7 @@ class TerminalChatUI:
                 (state_style, status)]
 
     def _session_line(self):
-        return f'  Session {self.session_id[:8]}    AES-256-GCM'
+        return f'  Session {self.session_id[:8]}    {self.rsa_label} · AES-256-GCM'
 
     def _counts_line(self):
         return f'  Sent {self.sent_count}    Received {self.received_count}'

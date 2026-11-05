@@ -1,58 +1,181 @@
-# Connected RSA-33 demonstration
+# ACG — RSA Chat & Quantum Interceptor
 
-Local Python CLI for an educational chain: AES-256-GCM encryption, toy RSA key protection, simulated quantum factorization, candidate AES-key recovery, and manual authenticated decryption.
+Two-way encrypted terminal chat with a separate passive Interceptor. Alice and Bob communicate directly over TCP; Interceptor captures their traffic and queues messages for key recovery and decryption using a Qiskit Aer simulation of Shor's algorithm.
 
-The [network chat demonstration](NETWORK_DEMO.md) adds two-way terminal chat and a separate **passive packet-capture and decryption tool**. Alice and Bob connect directly over TCP on one laptop; the observer records packets, queues encrypted messages, runs the existing Shor simulation, and decrypts the captured conversation. No relay or shared endpoint-secret file is used by the observer. The original menu demonstration below remains available.
+Run all three terminals on one laptop.
 
-## Setup and launch
-
-Tested with 64-bit Python 3.14 on Windows. From this directory in PowerShell:
-
-```powershell
-py -3.14 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe main.py
+```text
+Alice  <────── encrypted chat ──────>  Bob
+                     │
+               packet capture
+                     │
+                Interceptor
 ```
 
-Create the local `.venv` using the commands above; it is not included in the repository. No IBM account or quantum hardware is required. The active package is `encrypted_package.json` beside `main.py`, regardless of the terminal's current directory.
+## Install
 
-## Rehearsal
+Use 64-bit Python 3.12 or newer. On Windows, install [Npcap](https://npcap.com/#download) for packet capture.
 
-1. Select **1**, enter a short message such as `Hello 🔐`, and inspect the public package output. The sender does not print its AES key.
-2. Select **2**. Inspect real Aer measurement counts, the accepted phase and order, recovered factors, and reconstructed private exponent. Copy the candidate key's 64 hex characters.
-3. Select **3** and paste the key. Only successful AES-GCM authentication reveals the plaintext.
-4. Select **3** again with a different valid 64-character hex key to show authentication failure.
-5. Select **4** to exit.
+Clone the repository and install the dependencies in PowerShell:
 
-Messages are a single line, including empty input, at most 4,096 UTF-8 bytes. Creating another package asks before replacement. Missing or malformed packages return an error. Quantum failure returns to the menu without a key; it never substitutes classical factorization.
+```powershell
+git clone https://github.com/ashura-oss/ACG-PROJECT.git
+cd ACG-PROJECT
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements-network.txt
+```
 
-## Quantum implementation and evidence
+Open three terminals in the same repository directory. The commands below use the virtual environment directly, so activation is optional.
 
-Six work qubits start at `|1⟩`; 12 counting qubits undergo phase estimation followed by an inverse QFT. Each seven-qubit controlled unitary permutes residues using powers computed from public `N=33`, `a=5`, with identity action on work-register states 33 through 63. Aer executes these matrices directly on a CPU statevector. Elementary-gate synthesis is intentionally outside this small-instance prototype.
+On Linux/macOS, create the environment with `python3 -m venv .venv`, replace `.\.venv\Scripts\python.exe` with `.venv/bin/python`, and use your loopback interface (`lo` on Linux, usually `lo0` on macOS).
 
-Measured phases supply continued-fraction denominators, validated by modular exponentiation and GCD processing. Zero and unusable phases are rejected. The circuit builder and attack do not use known factors, a known order, exhaustive order search, or classical factorization. There are 1,024 shots per batch and at most three batches. A child process bounds circuit preparation, simulation, and recovery to a 30-second deadline.
+## Choose the RSA mode
 
-Run the reproducible feasibility gate:
+| Mode | Setup argument | Interceptor workflow |
+| --- | --- | --- |
+| RSA-2048 + OAEP-SHA256 (default) | `--bits 2048` | Capture and queue encrypted traffic |
+| RSA-33 | `--bits 6` | Run Shor, recover the key, decrypt messages |
+| 248-bit RSA | `--bits 248` | Capture traffic and measure chat operation timings |
+
+Use **RSA-33** for the complete quantum recovery demonstration. Local Shor recovery is available for RSA-33; the larger modes are for chat and timing comparisons.
+
+## Start the chat
+
+### 1. Create Bob's key
+
+For RSA-2048:
+
+```powershell
+.\.venv\Scripts\python.exe chat.py setup --bits 2048 --key-file chat_keys_2048.json
+```
+
+Run setup once. It preserves existing files. To use RSA-33 instead, run:
+
+```powershell
+.\.venv\Scripts\python.exe chat.py setup --bits 6 --key-file chat_keys.json
+```
+
+Use the matching key filename in Bob's command below. Alice selects the mode automatically from Bob's public key.
+
+### 2. Terminal C — Interceptor
+
+List capture interfaces:
+
+```powershell
+.\.venv\Scripts\python.exe capture.py --list-interfaces
+```
+
+Select the loopback interface and start Interceptor **before connecting Alice**. On Windows with Npcap, the loopback interface is typically `\Device\NPF_Loopback`:
+
+```powershell
+.\.venv\Scripts\python.exe intercept.py --live --interface '\Device\NPF_Loopback' --port 9001 --capture captures/chat.jsonl
+```
+
+Wait for capture to start, then launch the peers.
+
+### 3. Terminal B — Bob
+
+```powershell
+.\.venv\Scripts\python.exe chat.py listen --host 127.0.0.1 --port 9001 --name Bob --key-file chat_keys_2048.json
+```
+
+For RSA-33, replace `chat_keys_2048.json` with `chat_keys.json`.
+
+### 4. Terminal A — Alice
+
+```powershell
+.\.venv\Scripts\python.exe chat.py connect --host 127.0.0.1 --port 9001 --name Alice
+```
+
+Type a message in either chat terminal and press Enter. Interceptor collects the encrypted traffic as the conversation runs.
+
+## Chat controls
+
+| Action | Key or command |
+| --- | --- |
+| Send a message | Enter |
+| Clear the local conversation view | `/clear` |
+| Disconnect | `/quit` or Ctrl+C |
+| Scroll conversation history | PgUp / PgDn |
+| Jump to latest messages | Ctrl+End |
+
+Messages support Unicode and up to 4096 UTF-8 bytes per line. Add `--plain` to either chat command for scrolling text output.
+
+To start another conversation, rerun Bob's listening command and reconnect Alice. Keep Interceptor running to capture the next session.
+
+## Use Interceptor
+
+With an RSA-33 conversation running:
+
+1. Send messages from both Alice and Bob. They appear in Interceptor's queue.
+2. Press **F2** to run Shor and recover the RSA key.
+3. Press **F3** to decrypt the queued messages.
+4. Press **F4** to toggle automatic processing of new messages.
+
+You can also type commands in the command bar:
+
+| Command | Action |
+| --- | --- |
+| `status` | Refresh sessions and queue counts |
+| `recover` | Recover keys for captured RSA-33 sessions |
+| `decrypt-all` | Recover keys as needed and decrypt the backlog |
+| `follow` / `unfollow` | Start or pause automatic processing |
+| `export transcripts/conversation.jsonl` | Save decrypted messages to a new file |
+| `help` | Show available commands |
+| `quit` | Close Interceptor |
+
+Use Tab to select a pane and PgUp/PgDn to scroll. Closing Interceptor leaves Alice and Bob connected. Captures are saved under `captures/`; exported conversations go to the path you specify.
+
+To reopen a saved capture:
+
+```powershell
+.\.venv\Scripts\python.exe intercept.py --capture captures/chat.jsonl
+```
+
+To process it and exit:
+
+```powershell
+.\.venv\Scripts\python.exe intercept.py --capture captures/chat.jsonl --decrypt-all
+```
+
+## Timings and tests
+
+Measure RSA-2048 key generation, session exchange, and message encryption/decryption:
+
+```powershell
+.\.venv\Scripts\python.exe benchmark_rsa.py --bits 2048 --trials 20
+```
+
+Use `--bits 248` for the 248-bit profile. Results are saved as `rsa2048_benchmark_report.json` or `rsa248_benchmark_report.json`.
+
+Run the RSA-33 Shor benchmark and the test suite:
 
 ```powershell
 .\.venv\Scripts\python.exe benchmark.py
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-`benchmark_report.json` records all 20 seeds, machine information, dependency versions, measurements, timings, and the pass result. It is a measured benchmark of this machine, not a guarantee for another laptop. Re-run it before presenting elsewhere. The gate requires at least 19 successes and all runs under 30 seconds.
+To include live packet-capture tests on Windows:
 
-Initial result on 4 November 2026: **20/20 successful**, with wall times **4.49 to 5.57 seconds**, using Qiskit 2.6.1 and Aer 0.18.2. All recovered order 10 and factors 3 and 11 from measured data. The application test suite covers the connected workflow, all byte values, package validation, authentication failures, process isolation of inputs, retry exhaustion, and timeout termination.
+```powershell
+$env:ACG_LIVE_CAPTURE_INTERFACE = '\Device\NPF_Loopback'
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+Remove-Item Env:ACG_LIVE_CAPTURE_INTERFACE
+```
 
-## Package and authentication
+## Single-terminal workflow
 
-The version-1 JSON object has `header`, `nonce_hex`, and `ciphertext_and_tag_hex`. The header identifies `AES-256-GCM`, `TOY-RSA`, `BASE33-PAIRS-32-BYTES`, public `N` and `e`, and 64 wrapped key digits. Its sorted, compact ASCII JSON serialization is AES-GCM associated data. The 12-byte nonce and ciphertext with appended 16-byte tag are hex encoded. Strict parsing rejects unsupported fields, duplicate keys, wrong types, and invalid lengths.
+The original menu is also available:
 
-Option 2 returns a **candidate** key, without authenticating AES or decrypting data. Option 3 exclusively reads a user-entered key, accepts upper/lowercase hex and surrounding whitespace, and rejects internal whitespace. Authentication failures reveal no plaintext. Sender state is unnecessary for recovery, as verified in a fresh process; the menu is not an isolated security boundary.
+```powershell
+.\.venv\Scripts\python.exe main.py
+```
 
-## Limits and claims
+Select **1** to encrypt a message, **2** to run Shor and copy the recovered AES key, then **3** to paste that key and decrypt. Select **4** to exit.
 
-RSA-33 is trivially insecure. Its deterministic per-digit encoding can also be reversed by publicly encrypting all 33 possible digits, without factoring. This application demonstrates a factorization-based recovery route, not its necessity. It is not RSA-OAEP, a practical attack on RSA-2048, scalable modular arithmetic, or evidence of quantum speed advantage. AES is real library-backed AES-GCM; the weak toy key protection makes the whole construction insecure. Manual key entry serves the teaching flow and adds no security. ML-KEM is outside scope.
+## More details
 
-References: [IBM Shor tutorial](https://quantum.cloud.ibm.com/docs/en/tutorials/shors-algorithm), [Aer simulator](https://qiskit.github.io/qiskit-aer/stubs/qiskit_aer.AerSimulator.html), [cryptography AESGCM](https://cryptography.io/en/latest/hazmat/primitives/aead/), [RFC 8017](https://www.rfc-editor.org/rfc/rfc8017).
-
-For assessment, cite the sources used and declare AI assistance as required by the assignment brief. Present only results you can explain and independently verify.
+- [Network setup and packet-capture guide](NETWORK_DEMO.md)
+- [RSA-2048 setup and timings](RSA2048.md)
+- [248-bit RSA timings](RSA248_TIMINGS.md)
+- [Test results](VALIDATION.md)

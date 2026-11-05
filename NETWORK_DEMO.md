@@ -1,5 +1,10 @@
 # Passive RSA-33 chat demonstration
 
+`chat.py setup` now defaults to RSA-2048. This rehearsal explicitly selects
+`--bits 6` for the original RSA-33 quantum recovery. For RSA-2048 setup and
+measured timings, see [RSA2048.md](RSA2048.md); Interceptor captures that profile
+but cannot recover its key with the local simulator.
+
 Two terminal processes exchange AES-256-GCM encrypted messages over a direct TCP connection. A third process passively captures the traffic, reconstructs application frames, and queues them. The observer runs the existing Qiskit Aer Shor simulation to recover RSA factors, reconstructs the private exponent, unwraps each captured session secret, and authenticates/decrypts the queued messages.
 
 ```text
@@ -41,7 +46,7 @@ All paths below are relative to the repository directory. Each terminal must use
 First prepare Bob's legitimate endpoint key:
 
 ```powershell
-.\.venv\Scripts\python.exe chat.py setup --key-file chat_keys.json
+.\.venv\Scripts\python.exe chat.py setup --bits 6 --key-file chat_keys.json
 ```
 
 This endpoint-only file contains the intentionally tiny RSA private key. The observer does not read it, and it must not be added to Git.
