@@ -30,7 +30,81 @@ _HEADER_V2_FIELDS = set(_HEADER_V2_CONSTANTS) | {'session_id', 'alice', 'bob', '
 _HEADER_V3_CONSTANTS = {**HEADER_CONSTANTS, 'version': 3, 'e': 65537,
                         'key_encoding': 'RSA-OAEP-SHA256'}
 _HEADER_V3_FIELDS = set(_HEADER_V3_CONSTANTS) | {'session_id', 'alice', 'bob', 'wrapped_key_hex'}
+HYBRID_KEM = 'X25519MLKEM768'
+_HEADER_V4_CONSTANTS = {'protocol': 'ACG-CHAT', 'version': 4, 'aes_algorithm': 'AES-256-GCM',
+                        'kdf': 'HKDF-SHA256', 'key_encoding': HYBRID_KEM}
+_HEADER_V4_FIELDS = set(_HEADER_V4_CONSTANTS) | {'session_id', 'alice', 'bob', 'x25519_ephemeral_hex',
+                                                 'mlkem_ciphertext_hex', 'receiver_key_sha256'}
 _RECORD_FIELDS = {'type', 'session_id', 'direction', 'sequence', 'ciphertext_and_tag_hex'}
+
+
+TOY_RSA_ENCODING = 'TOY-RSA-BASE-N'
+TOY_RSA_BITS = (7, 8)
+_HEADER_V5_CONSTANTS = {'protocol': 'ACG-CHAT', 'version': 5, 'aes_algorithm': 'AES-256-GCM',
+                        'kdf': 'HKDF-SHA256', 'key_encoding': TOY_RSA_ENCODING}
+_HEADER_V5_FIELDS = set(_HEADER_V5_CONSTANTS) | {'N', 'e', 'session_id', 'alice', 'bob',
+                                                 'wrapped_key_digits'}
+
+
+def is_toy_rsa(header):
+    """True for the small, Shor-crackable RSA profile used by the desktop apps."""
+    return type(header) is dict and header.get('version') == 5
+
+
+def toy_digit_count(modulus):
+    """How many base-N digits a 256-bit AES key needs."""
+    count, value = 0, (1 << 256) - 1
+    while value:
+        value //= modulus
+        count += 1
+    return count
+
+
+def validate_toy_public(modulus, exponent):
+    if type(modulus) is not int or type(exponent) is not int:
+        raise ProtocolError('RSA parameters must be integers')
+    if modulus.bit_length() not in TOY_RSA_BITS or modulus % 2 == 0:
+        raise ProtocolError('Toy RSA modulus must be an odd 7 or 8-bit number')
+    if not 3 <= exponent < modulus:
+        raise ProtocolError('Invalid toy RSA public exponent')
+    return modulus, exponent
+
+
+def create_toy_session(alice, bob, public_key):
+    """Lock a fresh AES-256 key with small RSA, one base-N digit at a time."""
+    validate_name(alice)
+    validate_name(bob)
+    modulus, exponent = validate_toy_public(*public_key)
+    master = AESGCM.generate_key(bit_length=256)
+    value, digits = int.from_bytes(master, 'big'), []
+    for _ in range(toy_digit_count(modulus)):
+        value, digit = divmod(value, modulus)
+        digits.append(digit)
+    header = {**_HEADER_V5_CONSTANTS, 'N': modulus, 'e': exponent, 'session_id': uuid.uuid4().hex,
+              'alice': alice, 'bob': bob,
+              'wrapped_key_digits': [pow(digit, exponent, modulus) for digit in reversed(digits)]}
+    return validate_header(header), master
+
+
+def _recover_toy_master(header, private_exponent):
+    modulus = header['N']
+    value = 0
+    for wrapped in header['wrapped_key_digits']:
+        value = value * modulus + pow(wrapped, private_exponent, modulus)
+    if value >= 1 << 256:
+        raise ProtocolError('Recovered digits do not form an AES-256 key')
+    return value.to_bytes(32, 'big')
+
+
+def is_hybrid(header):
+    """True for the post-quantum hybrid profile, which has no RSA modulus."""
+    return type(header) is dict and header.get('version') == 4
+
+
+def _hex(value, length, what):
+    if type(value) is not str or re.fullmatch('[0-9a-f]{%d}' % (2 * length), value) is None:
+        raise ProtocolError(f'Invalid {what}')
+    return bytes.fromhex(value)
 
 
 class ProtocolError(ValueError):
@@ -101,6 +175,34 @@ def validate_header(header):
     if type(header) is not dict or type(header.get('version')) is not int:
         raise ProtocolError('Invalid session header fields')
     version = header['version']
+    if version == 5:
+        if set(header) != _HEADER_V5_FIELDS:
+            raise ProtocolError('Invalid session header fields')
+        for field, expected in _HEADER_V5_CONSTANTS.items():
+            if type(header[field]) is not type(expected) or header[field] != expected:
+                raise ProtocolError(f'Unsupported session parameter: {field}')
+        modulus, _ = validate_toy_public(header['N'], header['e'])
+        _session_id(header['session_id'])
+        validate_name(header['alice'])
+        validate_name(header['bob'])
+        digits = header['wrapped_key_digits']
+        if (type(digits) is not list or len(digits) != toy_digit_count(modulus) or
+                any(type(value) is not int or not 0 <= value < modulus for value in digits)):
+            raise ProtocolError('Invalid wrapped key digits')
+        return header
+    if version == 4:
+        if set(header) != _HEADER_V4_FIELDS:
+            raise ProtocolError('Invalid session header fields')
+        for field, expected in _HEADER_V4_CONSTANTS.items():
+            if type(header[field]) is not type(expected) or header[field] != expected:
+                raise ProtocolError(f'Unsupported session parameter: {field}')
+        _session_id(header['session_id'])
+        validate_name(header['alice'])
+        validate_name(header['bob'])
+        _hex(header['x25519_ephemeral_hex'], 32, 'X25519 ephemeral key')
+        _hex(header['mlkem_ciphertext_hex'], 1088, 'ML-KEM-768 ciphertext')
+        _hex(header['receiver_key_sha256'], 32, 'receiver key fingerprint')
+        return header
     profiles = {1: (_HEADER_FIELDS, HEADER_CONSTANTS),
                 2: (_HEADER_V2_FIELDS, _HEADER_V2_CONSTANTS),
                 3: (_HEADER_V3_FIELDS, _HEADER_V3_CONSTANTS)}
@@ -180,6 +282,91 @@ def create_session(alice, bob, *, public_key=(33, 3)):
     return validate_header(header), master
 
 
+def generate_hybrid_key():
+    """Receiver key file for the hybrid profile: X25519 plus ML-KEM-768."""
+    from cryptography.hazmat.primitives.asymmetric import mlkem, x25519
+    return {'kem': HYBRID_KEM,
+            'x25519_private_hex': x25519.X25519PrivateKey.generate().private_bytes_raw().hex(),
+            'mlkem_seed_hex': mlkem.MLKEM768PrivateKey.generate().private_bytes_raw().hex()}
+
+
+def _hybrid_private(key):
+    from cryptography.hazmat.primitives.asymmetric import mlkem, x25519
+    if type(key) is not dict or set(key) != {'kem', 'x25519_private_hex', 'mlkem_seed_hex'} or key['kem'] != HYBRID_KEM:
+        raise ProtocolError('Invalid hybrid key fields')
+    try:
+        classical = x25519.X25519PrivateKey.from_private_bytes(_hex(key['x25519_private_hex'], 32, 'X25519 private key'))
+        post_quantum = mlkem.MLKEM768PrivateKey.from_seed_bytes(_hex(key['mlkem_seed_hex'], 64, 'ML-KEM-768 seed'))
+    except ValueError as error:
+        raise ProtocolError('Invalid hybrid private key') from error
+    return classical, post_quantum
+
+
+def validate_hybrid_private(key):
+    _hybrid_private(key)
+    return key
+
+
+def hybrid_public(key):
+    """The two public keys the receiver announces in its greeting."""
+    classical, post_quantum = _hybrid_private(key)
+    return {'x25519_public_hex': classical.public_key().public_bytes_raw().hex(),
+            'mlkem_public_hex': post_quantum.public_key().public_bytes_raw().hex()}
+
+
+def _hybrid_fingerprint(public):
+    digest = hashes.Hash(hashes.SHA256())
+    digest.update(bytes.fromhex(public['x25519_public_hex']) + bytes.fromhex(public['mlkem_public_hex']))
+    return digest.finalize().hex()
+
+
+def _hybrid_master(post_quantum_secret, classical_secret, header):
+    # Both secrets feed one KDF: an attacker must break ML-KEM and X25519.
+    context = canonical(header)
+    return HKDF(algorithm=hashes.SHA256(), length=32, salt=bytes.fromhex(header['session_id']),
+                info=b'ACG-CHAT-v4/master/' + context).derive(post_quantum_secret + classical_secret)
+
+
+def create_hybrid_session(alice, bob, public):
+    """Sender side: ephemeral X25519 plus ML-KEM-768 encapsulation."""
+    from cryptography.hazmat.primitives.asymmetric import mlkem, x25519
+    validate_name(alice)
+    validate_name(bob)
+    if type(public) is not dict or set(public) != {'x25519_public_hex', 'mlkem_public_hex'}:
+        raise ProtocolError('Invalid hybrid public key')
+    try:
+        classical_peer = x25519.X25519PublicKey.from_public_bytes(_hex(public['x25519_public_hex'], 32, 'X25519 public key'))
+        post_quantum_peer = mlkem.MLKEM768PublicKey.from_public_bytes(_hex(public['mlkem_public_hex'], 1184, 'ML-KEM-768 public key'))
+        ephemeral = x25519.X25519PrivateKey.generate()
+        classical_secret = ephemeral.exchange(classical_peer)
+        post_quantum_secret, ciphertext = post_quantum_peer.encapsulate()
+    except ValueError as error:
+        raise ProtocolError('Invalid hybrid public key') from error
+    header = {**_HEADER_V4_CONSTANTS, 'session_id': uuid.uuid4().hex, 'alice': alice, 'bob': bob,
+              'x25519_ephemeral_hex': ephemeral.public_key().public_bytes_raw().hex(),
+              'mlkem_ciphertext_hex': bytes(ciphertext).hex(),
+              'receiver_key_sha256': _hybrid_fingerprint(public)}
+    return validate_header(header), _hybrid_master(bytes(post_quantum_secret), classical_secret, header)
+
+
+def recover_hybrid_master(header, key):
+    """Receiver side. Needs both private keys; there is no RSA modulus to factor."""
+    from cryptography.hazmat.primitives.asymmetric import x25519
+    validate_header(header)
+    if not is_hybrid(header):
+        raise ProtocolError('Not a hybrid session')
+    classical, post_quantum = _hybrid_private(key)
+    if header['receiver_key_sha256'] != _hybrid_fingerprint(hybrid_public(key)):
+        raise ProtocolError('Session was created for a different receiver key')
+    try:
+        classical_secret = classical.exchange(
+            x25519.X25519PublicKey.from_public_bytes(bytes.fromhex(header['x25519_ephemeral_hex'])))
+        post_quantum_secret = post_quantum.decapsulate(bytes.fromhex(header['mlkem_ciphertext_hex']))
+    except ValueError as error:
+        raise ProtocolError('Hybrid key agreement failed') from error
+    return _hybrid_master(bytes(post_quantum_secret), classical_secret, header)
+
+
 def derive_keys(master, header):
     validate_header(header)
     if type(master) is not bytes or len(master) != 32:
@@ -193,8 +380,12 @@ def derive_keys(master, header):
 
 def recover_master(header, private_exponent):
     validate_header(header)
+    if is_hybrid(header):
+        raise ProtocolError('Hybrid sessions have no RSA private exponent')
     if type(private_exponent) is not int or not 1 <= private_exponent < header['N']:
         raise ProtocolError('Invalid RSA private exponent')
+    if is_toy_rsa(header):
+        return _recover_toy_master(header, private_exponent)
     if header['version'] == 3:
         from Crypto.Cipher import PKCS1_OAEP
         from Crypto.Hash import SHA256

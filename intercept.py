@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 
-from chat_protocol import (DIRECTIONS, decrypt_record, recover_master,
+from chat_protocol import (DIRECTIONS, decrypt_record, is_hybrid, recover_master,
                            validate_header, validate_record)
 from shor import AttackFailure, run_factorization
 
@@ -84,6 +84,7 @@ class CaptureQueue:
         self.private_exponents = {}
         self.evidence = {}
         self.recovery_errors = {}
+        self.quantum_safe = set()
         self._offset = 0
         self._identity = None
         self._line_number = 0
@@ -212,6 +213,14 @@ class CaptureQueue:
             if session.master is not None:
                 continue
             header = session.header
+            if is_hybrid(header):
+                # No RSA modulus exists to factor, so Shor has no target here.
+                if session_id not in self.quantum_safe:
+                    self.quantum_safe.add(session_id)
+                    self.output(f'Session {session_id[:8]} uses X25519 + ML-KEM-768. '
+                                'Shor has no RSA modulus to factor and no known quantum attack breaks ML-KEM. '
+                                'Messages stay encrypted.')
+                continue
             public_key = (header['N'], header['e'])
             if public_key not in self.private_exponents:
                 if public_key in self.recovery_errors and not retry:
@@ -295,7 +304,9 @@ class CaptureQueue:
         result = []
         for session_id, session in self.sessions.items():
             pending = sum(not record.processed for record in session.records)
-            if session.master is None:
+            if session.master is None and is_hybrid(session.header):
+                state = 'QUANTUM_SAFE'
+            elif session.master is None:
                 state = 'WAITING_FOR_KEY_WITH_ERRORS' if session.error_count else 'WAITING_FOR_KEY'
             elif session.error_count:
                 state = 'INCOMPLETE_OR_INVALID'

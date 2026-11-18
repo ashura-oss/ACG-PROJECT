@@ -251,6 +251,8 @@ class InterceptorController:
             if record.processed or record.session_id in self._blocked_sessions:
                 continue
             session = self.queue.sessions[record.session_id]
+            if session.header.get('version') == 4:
+                continue  # post-quantum hybrid session: nothing for Shor to recover
             public = (session.header['N'], session.header['e'])
             if session.master is not None or public not in self.queue.recovery_errors:
                 return True

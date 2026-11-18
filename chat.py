@@ -6,21 +6,23 @@ import socket
 import sys
 import threading
 
-from chat_protocol import (FrameReader, ProtocolError,
-                           RecordReceiver, create_session, encode_frame,
-                           encrypt_record, recover_master, validate_header,
+from chat_protocol import (HYBRID_KEM, FrameReader, ProtocolError,
+                           RecordReceiver, create_hybrid_session, create_session,
+                           encode_frame, encrypt_record, generate_hybrid_key,
+                           hybrid_public, is_hybrid, recover_hybrid_master,
+                           recover_master, validate_header, validate_hybrid_private,
                            validate_name)
 from rsa_modes import generate_key, validate_private, validate_public
 
 DEFAULT_KEY_FILE = Path(__file__).with_name('chat_private_key.json')
 
 
-def setup_key(path, bits=2048):
+def setup_key(path, bits=2048, pqc=False):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     # This is the legitimate receiver's educational private key. The passive
     # attacker never reads this file and reconstructs d from measured factors.
-    key = generate_key(bits)
+    key = generate_hybrid_key() if pqc else generate_key(bits)
     with path.open('x', encoding='utf-8') as stream:
         json.dump(key, stream, indent=2)
         stream.write('\n')
@@ -40,6 +42,8 @@ def load_key(path):
         key = json.loads(text)
     except (OSError, ValueError) as error:
         raise ProtocolError(f'Cannot load receiver key; run chat.py setup first: {error}') from error
+    if type(key) is dict and 'kem' in key:
+        return validate_hybrid_private(key)
     try:
         validate_private(key)
     except ValueError as error:
@@ -57,6 +61,20 @@ def _required(reader):
 def client_handshake(connection, reader, name):
     validate_name(name)
     greeting = _required(reader)
+    if greeting.get('version') == 4:
+        fixed = {'type': 'public_key', 'protocol': 'ACG-CHAT', 'version': 4, 'kem': HYBRID_KEM}
+        if set(greeting) != set(fixed) | {'name', 'x25519_public_hex', 'mlkem_public_hex'}:
+            raise ProtocolError('Invalid server public-key greeting')
+        if any(greeting[field] != value for field, value in fixed.items()):
+            raise ProtocolError('Unsupported server public-key greeting')
+        validate_name(greeting['name'])
+        header, master = create_hybrid_session(name, greeting['name'], {
+            'x25519_public_hex': greeting['x25519_public_hex'],
+            'mlkem_public_hex': greeting['mlkem_public_hex']})
+        connection.sendall(encode_frame({'type': 'session', 'header': header}))
+        if _required(reader) != {'type': 'ready', 'session_id': header['session_id']}:
+            raise ProtocolError('Invalid server ready response')
+        return header, master
     try:
         version = validate_public(greeting.get('N'), greeting.get('e'))
     except ValueError as error:
@@ -94,6 +112,30 @@ def server_handshake(connection, reader, name, private_exponent, *, public_key=(
     master = recover_master(header, private_exponent)
     connection.sendall(encode_frame({'type': 'ready', 'session_id': header['session_id']}))
     return header, master
+
+
+def hybrid_server_handshake(connection, reader, name, key):
+    """Receiver side of the post-quantum hybrid profile."""
+    validate_name(name)
+    connection.sendall(encode_frame({'type': 'public_key', 'protocol': 'ACG-CHAT', 'version': 4,
+                                     'kem': HYBRID_KEM, **hybrid_public(key), 'name': name}))
+    frame = _required(reader)
+    if set(frame) != {'type', 'header'} or frame['type'] != 'session':
+        raise ProtocolError('Invalid session handshake')
+    header = validate_header(frame['header'])
+    if not is_hybrid(header):
+        raise ProtocolError('Session does not use the hybrid key exchange')
+    if header['bob'] != name:
+        raise ProtocolError('Session receiver label does not match the greeting')
+    master = recover_hybrid_master(header, key)
+    connection.sendall(encode_frame({'type': 'ready', 'session_id': header['session_id']}))
+    return header, master
+
+
+def key_label(header):
+    if is_hybrid(header):
+        return 'X25519 + ML-KEM-768'
+    return 'RSA-33' if header['N'] == 33 else f'RSA-{header["N"].bit_length()}'
 
 
 def _shutdown(connection):
@@ -135,8 +177,8 @@ def run_interactive_chat(connection, reader, header, master, role):
         stopped.set()
         _shutdown(connection)
 
-    rsa_label = 'RSA-33' if header['N'] == 33 else f'RSA-{header["N"].bit_length()}'
-    ui = TerminalChatUI(own_name, peer_name, header['session_id'], send, quit_chat,
+    rsa_label = key_label(header)
+    ui =TerminalChatUI(own_name, peer_name, header['session_id'], send, quit_chat,
                         rsa_label=rsa_label)
 
     def receive():
@@ -174,6 +216,7 @@ def run_chat(connection, reader, header, master, role, plain=False):
     receiver = RecordReceiver(header, master, incoming)
     stopped = threading.Event()
     print(f'Connected session {header["session_id"]}: {own_name} <-> {peer_name}', flush=True)
+    print(f'Key exchange: {key_label(header)} | AES-256-GCM', flush=True)
     print('Enter to send | /quit to exit', flush=True)
 
     def send_input():
@@ -239,8 +282,11 @@ def listen(host, port, name, key_file, plain=False):
             connection.settimeout(10)
             reader = FrameReader(connection)
             try:
-                header, master = server_handshake(connection, reader, name, key['d'],
-                                                   public_key=(key['N'], key['e']))
+                if 'kem' in key:
+                    header, master = hybrid_server_handshake(connection, reader, name, key)
+                else:
+                    header, master = server_handshake(connection, reader, name, key['d'],
+                                                       public_key=(key['N'], key['e']))
                 connection.settimeout(None)
                 run_chat(connection, reader, header, master, 'bob', plain=plain)
             finally:
@@ -257,6 +303,8 @@ def main(argv=None):
     setup.add_argument('--key-file', type=Path, default=DEFAULT_KEY_FILE)
     setup.add_argument('--bits', type=int, choices=(6, 248, 2048), default=2048,
                        help='RSA modulus size (default: 2048; use 6 for RSA-33)')
+    setup.add_argument('--pqc', action='store_true',
+                       help='Create a post-quantum hybrid key (X25519 + ML-KEM-768) instead of RSA')
     for command, name in (('listen', 'Bob'), ('connect', 'Alice')):
         peer = commands.add_parser(command)
         peer.add_argument('--host', default='127.0.0.1')
@@ -268,7 +316,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.command == 'setup':
-            setup_key(args.key_file, bits=args.bits)
+            setup_key(args.key_file, bits=args.bits, pqc=args.pqc)
         elif not 1 <= args.port <= 65535:
             raise ProtocolError('Port must be in 1..65535')
         elif args.command == 'listen':

@@ -282,7 +282,8 @@ class InterceptorUI:
         sessions = _rows(self.snapshot.get('sessions'))
         queue_lines = [[('class:muted', ' SESSION   PEERS                      QUEUED  READ  STATE')]]
         states = {'WAITING_FOR_KEY': 'WAITING', 'WAITING_FOR_KEY_WITH_ERRORS': 'WAITING / ERROR',
-                  'KEY_RECOVERED': 'KEY READY', 'INCOMPLETE_OR_INVALID': 'INCOMPLETE'}
+                  'KEY_RECOVERED': 'KEY READY', 'INCOMPLETE_OR_INVALID': 'INCOMPLETE',
+                  'QUANTUM_SAFE': 'QUANTUM-SAFE'}
         if not sessions:
             queue_lines = [[('class:muted', ' No sessions yet.')]]
         for session in sessions:

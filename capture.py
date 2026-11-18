@@ -166,9 +166,12 @@ class PacketObserver:
     """Convert captured packets to public JSONL events, without decryption."""
 
     def __init__(self, port, emit):
-        if type(port) is not int or not 1 <= port <= 65535:
+        # port is one chat port, or an inclusive (low, high) range for the desktop apps.
+        low, high = (port, port) if type(port) is int else port
+        if (type(low) is not int or type(high) is not int or not 1 <= low <= high <= 65535):
             raise ValueError('Chat port must be in 1..65535')
         self.port = port
+        self._ports = range(low, high + 1)
         self.emit = emit
         self.connections = {}
         self.frames = 0
@@ -187,10 +190,11 @@ class PacketObserver:
             return
         tcp = packet[TCP]
         network = packet[IP] if IP in packet else packet[IPv6]
-        if tcp.dport == self.port and tcp.sport != self.port:
+        to_listener, from_listener = int(tcp.dport) in self._ports, int(tcp.sport) in self._ports
+        if to_listener and not from_listener:
             direction = 'a_to_b'
             key = (network.src, int(tcp.sport), network.dst, int(tcp.dport))
-        elif tcp.sport == self.port and tcp.dport != self.port:
+        elif from_listener and not to_listener:
             direction = 'b_to_a'
             key = (network.dst, int(tcp.dport), network.src, int(tcp.sport))
         else:
@@ -259,8 +263,26 @@ def list_interfaces():
         print(f'{name}\t{description}', flush=True)
 
 
+def _exit_with_parent(pid):
+    """Stop capturing if the app that started us is closed or killed (Windows)."""
+    import ctypes
+    import os
+    import threading
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
+    if not handle:
+        os._exit(0)
+
+    def wait():
+        kernel32.WaitForSingleObject(handle, 0xFFFFFFFF)
+        os._exit(0)
+    threading.Thread(target=wait, daemon=True).start()
+
+
 def capture(args):
     from scapy.all import PcapReader, PcapWriter, conf, sniff
+    if args.parent_pid and sys.platform == 'win32':
+        _exit_with_parent(args.parent_pid)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     # Appending permits a stopped listener to resume without overwriting its queue.
@@ -268,7 +290,13 @@ def capture(args):
         def emit(event):
             stream.write(json.dumps(event, ensure_ascii=True, separators=(',', ':')) + '\n')
             stream.flush()
-        observer = PacketObserver(args.port, emit)
+        ports = args.port
+        bpf = f'tcp port {args.port}'
+        if args.port_range:
+            low, _, high = args.port_range.partition('-')
+            ports = (int(low), int(high))
+            bpf = f'tcp portrange {ports[0]}-{ports[1]}'
+        observer = PacketObserver(ports, emit)
         raw_capture = None
         try:
             if args.pcap:
@@ -293,10 +321,10 @@ def capture(args):
                     if raw_capture is not None:
                         raw_capture.write(packet)
                     observer.consume(packet)
-                sniff(iface=args.interface, filter=f'tcp port {args.port}', store=False,
+                sniff(iface=args.interface, filter=bpf, store=False,
                       prn=observe,
                       started_callback=lambda: print(
-                          f'Capture ready on {args.interface}, TCP port {args.port}.', flush=True))
+                          f'Capture ready on {args.interface}, {bpf}.', flush=True))
         finally:
             observer.finish()
             if raw_capture is not None:
@@ -313,6 +341,8 @@ def main(argv=None):
     source.add_argument('--interface', help='Loopback or lab interface name from --list-interfaces')
     source.add_argument('--pcap', help='Import an existing PCAP/PCAPNG instead of capturing live')
     parser.add_argument('--port', type=int, default=9001)
+    parser.add_argument('--port-range', help='Capture every chat port in LOW-HIGH (used by the desktop apps)')
+    parser.add_argument('--parent-pid', type=int, help=argparse.SUPPRESS)
     parser.add_argument('--output', default='captures/chat.jsonl')
     parser.add_argument('--pcap-out', help='Optionally also save original packets to a new PCAP')
     args = parser.parse_args(argv)

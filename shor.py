@@ -140,6 +140,80 @@ def run_factorization(seed=None, shots=1024, batches=3, timeout=30.0, *, modulus
             process.join()
 
 
+MAX_CRACK_BITS = 8
+
+
+def general_multiplier(multiplier, modulus):
+    """Controlled modular multiplication for any small modulus (qubit 0 is control)."""
+    import numpy as np
+    work = modulus.bit_length()
+    size = 1 << (work + 1)
+    matrix = np.zeros((size, size), dtype=complex)
+    for column in range(size):
+        control, value = column & 1, column >> 1
+        target = multiplier * value % modulus if control and value < modulus else value
+        matrix[(target << 1) | control, column] = 1
+    return matrix
+
+
+def general_circuit(modulus, base):
+    """Same construction as build_circuit, sized for the modulus: 2n counting + n work qubits."""
+    from qiskit import QuantumCircuit
+    work = modulus.bit_length()
+    counting = 2 * work
+    circuit = QuantumCircuit(counting + work, counting)
+    circuit.x(counting)
+    circuit.h(range(counting))
+    for j in range(counting):
+        circuit.unitary(general_multiplier(pow(base, 2**j, modulus), modulus),
+                        [j, *range(counting, counting + work)], label=f"CM{j}")
+    for j in range(counting // 2):
+        circuit.swap(j, counting - j - 1)
+    for j in range(counting):
+        for k in range(j):
+            circuit.cp(-math.pi / 2**(j-k), k, j)
+        circuit.h(j)
+    circuit.measure(range(counting), range(counting))
+    return circuit
+
+
+def crack(modulus, *, seed=None, max_attempts=8, shots=1024, progress=None):
+    """Factor a small odd modulus with simulated Shor order finding.
+
+    Bases sharing a factor with the modulus are skipped, so every success comes
+    from the quantum measurement, never from a lucky classical gcd.
+    """
+    import random
+    if type(modulus) is not int or modulus % 2 == 0 or not 15 <= modulus < 1 << MAX_CRACK_BITS:
+        raise ValueError(f'Shor simulation supports odd moduli from 15 to {(1 << MAX_CRACK_BITS) - 1}')
+    from qiskit_aer import AerSimulator
+    report = progress or (lambda message: None)
+    rng = random.Random(seed)
+    work = modulus.bit_length()
+    counting = 2 * work
+    simulator = AerSimulator(method="statevector", max_parallel_threads=0)
+    started = time.perf_counter()
+    tried = []
+    candidates = [a for a in range(2, modulus - 1) if math.gcd(a, modulus) == 1]
+    rng.shuffle(candidates)
+    for base in candidates[:max_attempts]:
+        tried.append(base)
+        report(f'Attempt {len(tried)}: base a = {base}, simulating {counting + work} qubits ...')
+        options = {} if seed is None else {"seed_simulator": seed + len(tried)}
+        result = simulator.run(general_circuit(modulus, base), shots=shots, **options).result()
+        if not result.success:
+            raise AttackFailure("Aer simulation failed")
+        counts = result.get_counts()
+        answer = infer_factors(counts, counting=counting, modulus=modulus, base=base)
+        if answer:
+            answer.update(modulus=modulus, base=base, counts=counts, shots=shots,
+                          counting_qubits=counting, work_qubits=work, attempts=len(tried),
+                          bases_tried=tried, elapsed_seconds=time.perf_counter() - started)
+            return answer
+        report(f'Base {base} gave no usable period; trying another base.')
+    raise AttackFailure(f'No factors after {len(tried)} bases')
+
+
 if __name__ == "__main__":
     import json
     print(json.dumps(run_factorization(seed=0), indent=2))
