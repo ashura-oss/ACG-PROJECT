@@ -1,5 +1,0 @@
-# Chat endpoints only; no simulator or packet-capture driver is needed.
-# The post-quantum mode needs ML-KEM support; tested with cryptography 50.0.2.
-cryptography>=50,<51
-prompt_toolkit>=3.0.48,<4
-pycryptodome>=3.23,<4

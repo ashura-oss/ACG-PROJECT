@@ -1,12 +1,4 @@
 .venv/
 __pycache__/
-encrypted_package.json
 captures/
-chat_keys.json
-chat_private_key.json
-chat_keys_248.json
-chat_keys_2048.json
-chat_keys_pqc.json
-chat_keys_*.json
-transcripts/
-.pytest_cache/
+*.json
