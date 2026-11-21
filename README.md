@@ -1,9 +1,11 @@
 # ACG: Shor vs post-quantum
 
-Chat messages are encrypted with AES-256. The AES key is locked with either:
+Alice and Bob chat with AES-256. The AES key is locked with either:
 
-- **RSA** (a random 7-bit key), which the Interceptor cracks live with a simulation of Shor's algorithm, or
-- **post-quantum** X25519 + ML-KEM-768, which Shor's cannot crack.
+- **RSA**: a tiny random key that the Interceptor cracks live with a simulation of Shor's algorithm, or
+- **PQC**: ML-KEM-768, which Shor's cannot crack.
+
+The Interceptor sniffs the traffic and holds the encrypted messages. Once it cracks the key, it decrypts everything it held and then every new message live.
 
 ## Install (Windows)
 
@@ -16,23 +18,20 @@ py -3 -m venv .venv
 
 ## Run
 
-1. Start the Interceptor:
-
-   ```powershell
-   .\.venv\Scripts\pythonw.exe interceptor_app.py
-   ```
-
-2. Start two or more chatters. Give each a name and pick a lock:
-
-   ```powershell
-   .\.venv\Scripts\pythonw.exe chat_app.py
-   ```
-
-3. Click a name to chat. Chatters only see others with the same lock.
-4. In the Interceptor, open the conversation's tab and press **Crack with Shor's**.
-
-## Test
-
 ```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s tests
+.\.venv\Scripts\pythonw.exe demo.py
 ```
+
+This opens Alice, Bob and the Interceptor together.
+
+1. Chat between Alice and Bob. The Interceptor holds the messages, still encrypted.
+2. Press **Crack with Shor's**. The held messages decrypt, and new ones decrypt live.
+3. Press **PQC** in Alice's window to start a post-quantum chat. Cracking it fails.
+
+## Files
+
+| File | Contents |
+|---|---|
+| `demo.py` | The three windows |
+| `common.py` | AES and the two locks |
+| `shor.py` | Shor's algorithm (`python shor.py 91` factors 91) |
